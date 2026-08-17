@@ -1,0 +1,2250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OnePage Karaoke</title>
+    <style>
+      :root {
+        --bg-base: #0b0c10;
+        --bg-surface: #1f2833;
+        --bg-panel: #161f28;
+        --border: #45f3ff33;
+        --text-main: #c5c6c7;
+        --text-muted: #8fa7b2;
+        --accent: #45f3ff;
+        --accent-hover: #66fcf1;
+        --success: #7dffb3;
+        --warning: #ffcf66;
+        --danger: #ff8a80;
+        --label-color: #66fcf1;
+        --control-bg: #111821;
+        --control-fg: #ffffff;
+        --control-border: #45f3ff66;
+        --button-bg: #45f3ff;
+        --button-fg: #0b0c10;
+        --button-hover-bg: #66fcf1;
+        --button-small-fg: #c5c6c7;
+        --radius: 6px;
+      }
+      body {
+        font-family: "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: var(--bg-base);
+        color: var(--text-main);
+        line-height: 1.5;
+      }
+      h1, h2, h3, h4 { color: var(--accent-hover); margin-top: 0; }
+      .app-layout {
+        display: grid;
+        grid-template-columns: 400px 1fr;
+        gap: 20px;
+        max-width: 1900px;
+        margin: 0 auto;
+      }
+      .right-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .top-panels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+      .top-panels .card { margin-bottom: 0; min-height: 0; }
+      .card {
+        background: var(--bg-surface);
+        padding: 16px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        margin-bottom: 16px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        resize: both;
+        overflow: auto;
+        min-width: 280px;
+        min-height: 120px;
+      }
+      label {
+        display: block;
+        margin: 10px 0 4px;
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--label-color);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      input[type="text"], input[type="number"], input[type="range"], select, textarea {
+        width: 100%;
+        padding: 8px 10px;
+        background: var(--control-bg);
+        border: 1px solid var(--control-border);
+        border-radius: 4px;
+        color: var(--control-fg);
+        box-sizing: border-box;
+        font-size: 13px;
+      }
+      input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--control-fg) 65%, transparent); }
+      select option { background: var(--control-bg); color: var(--control-fg); }
+      input[type="text"]:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      textarea {
+        height: 180px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        resize: vertical;
+      }
+      .section-toggle {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: transparent;
+        border: none;
+        color: inherit;
+        padding: 0;
+        margin: 0 0 12px;
+        cursor: pointer;
+        text-align: center;
+        position: relative;
+      }
+      .section-toggle > span:first-child { width: 100%; text-align: center; }
+      .section-toggle-main { font-size: 19px; font-weight: 700; color: var(--accent-hover); display: block; text-align: center; }
+      .section-toggle-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block; }
+      .section-toggle-arrow { font-size: 18px; color: var(--accent); transition: transform 0.2s ease; position: absolute; right: 0; top: 2px; }
+      .section-toggle.collapsed .section-toggle-arrow { transform: rotate(-90deg); }
+      .section-body.hidden { display: none; }
+      .btn {
+        background: var(--button-bg);
+        color: var(--button-fg);
+        border: none;
+        padding: 8px 12px;
+        font-weight: 700;
+        font-size: 13px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .btn:hover { background: var(--button-hover-bg); box-shadow: 0 0 8px rgba(102, 252, 241, 0.4); }
+      .btn-wide { width: 100%; margin-top: 10px; }
+      .btn-small { padding: 6px 10px; font-size: 11px; background: transparent; border: 1px solid var(--control-border); color: var(--button-small-fg); }
+      .btn-small:hover { background: rgba(69, 243, 255, 0.1); border-color: var(--accent); color: var(--control-fg); }
+      .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .pipeline-section { border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 12px; margin-top: 12px; background: rgba(0, 0, 0, 0.2); }
+      .preview-pane {
+        position: sticky;
+        top: 20px;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        background: var(--bg-panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: auto;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        resize: both;
+        min-width: 540px;
+        min-height: 440px;
+      }
+      .preview-header-overlay {
+        position: absolute;
+        top: 0; left: 0; width: 100%; padding: 12px;
+        background: linear-gradient(180deg, rgba(11, 12, 16, 0.95) 0%, rgba(11, 12, 16, 0.4) 70%, transparent 100%);
+        display: flex; flex-wrap: wrap; gap: 10px; z-index: 10; opacity: 0.15; transition: opacity 0.3s ease;
+        align-items: center; justify-content: center; border-radius: var(--radius) var(--radius) 0 0;
+      }
+      .preview-pane:hover .preview-header-overlay { opacity: 1; }
+      .compact-ctrl { display: flex; align-items: center; gap: 6px; background: rgba(31, 40, 51, 0.8); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; }
+      .compact-ctrl input[type="color"] { width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; background: transparent; }
+      .compact-ctrl select, .compact-ctrl input[type="range"] { background: transparent; border: none; padding: 0; width: 80px; color: var(--control-fg); }
+      .compact-ctrl select:focus { outline: none; }
+      .compact-ctrl select option { background-color: var(--control-bg); color: var(--control-fg); }
+      #canvas-wrapper { width: 100%; aspect-ratio: 16/9; background: #000; position: relative; }
+      canvas { width: 100%; height: 100%; display: block; }
+      .integrated-timing-rail { background: rgba(11, 12, 16, 0.9); border-top: 1px solid var(--border); padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+      .media-controls { background: var(--bg-surface); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .media-controls input[type="range"] { flex: 1; min-width: 100px; }
+      .media-inline-control { display: flex; align-items: center; gap: 8px; }
+      .media-inline-control label { margin: 0; }
+      .media-inline-control label { font-size: 15px; color: var(--label-color); }
+      .media-controls select {
+        background: var(--control-bg) !important;
+        color: var(--control-fg);
+        border: 1px solid var(--control-border);
+      }
+      .media-controls select option {
+        background: var(--control-bg);
+        color: var(--control-fg);
+      }
+      .state-badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+      .state-waiting { background: rgba(255, 207, 102, 0.1); color: var(--warning); border: 1px solid rgba(255, 207, 102, 0.2); }
+      .state-ready, .state-completed { background: rgba(125, 255, 179, 0.1); color: var(--success); border: 1px solid rgba(125, 255, 179, 0.2); }
+      .state-running { background: rgba(69, 243, 255, 0.1); color: var(--accent); border: 1px solid rgba(69, 243, 255, 0.2); }
+      .state-failed { background: rgba(255, 138, 128, 0.1); color: var(--danger); border: 1px solid rgba(255, 138, 128, 0.2); }
+      .job-list { max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+      .job-item { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--bg-base); }
+      .job-top { display: flex; justify-content: space-between; align-items: center; }
+      .job-label { font-size: 13px; font-weight: 600; color: #fff; }
+      .job-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+      .job-bar { width: 100%; height: 4px; background: var(--bg-surface); border-radius: 2px; overflow: hidden; margin-top: 8px; }
+      .job-bar-fill { height: 100%; background: var(--accent); }
+      .file-row { display: block; padding: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 12px; }
+      .file-row-active {
+        border: 1px solid var(--accent-hover);
+        border-radius: 6px;
+        background: linear-gradient(90deg, rgba(69, 243, 255, 0.14), rgba(125, 255, 179, 0.08));
+        box-shadow: 0 0 12px rgba(69, 243, 255, 0.45);
+        animation: activeVaultPulse 1.1s ease-in-out infinite alternate;
+      }
+      .file-row-main { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .file-row-actions { display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+      .vault-btn { padding: 3px 7px; font-size: 10px; line-height: 1.2; }
+      .file-row-active .file-name { color: #fff; font-weight: 700; }
+      @keyframes activeVaultPulse {
+        from { box-shadow: 0 0 8px rgba(69, 243, 255, 0.25), 0 0 0 rgba(102, 252, 241, 0.1); }
+        to { box-shadow: 0 0 18px rgba(102, 252, 241, 0.75), 0 0 10px rgba(125, 255, 179, 0.35); }
+      }
+      .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .btn[disabled] { opacity: 0.9; cursor: default; pointer-events: none; }
+      .manual-word { color: var(--success); font-weight: 700; font-size: 14px; }
+      .snapshot-bottom-wrap {
+        max-width: 1900px;
+        margin: 12px auto 0;
+        padding: 0 4px;
+      }
+      .btn-snapshot-bottom {
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 16px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 800;
+      }
+      .theme-meta {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+        min-height: 18px;
+      }
+      .debug-output {
+        margin-top: 10px;
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.28);
+        padding: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+      }
+      .debug-summary {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+      }
+      .debug-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      @media (max-width: 1200px) {
+        .app-layout { grid-template-columns: 1fr; }
+        .top-panels { grid-template-columns: 1fr; }
+        .preview-pane { position: static; min-width: 0; }
+        .card { min-width: 0; }
+      }
+    </style>
+</head>
+<body>
+    <h2 style="text-align: center; margin-bottom: 24px; letter-spacing: -0.5px">OnePage-Karaoke Creator</h2>
+
+    <div class="app-layout">
+      <div class="sidebar">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionIngestBody', this)">
+            <span>
+              <span class="section-toggle-main">1. Source &amp; Ingest</span>
+              <span class="section-toggle-sub">Hardware allocation, file uploads, and URL scraping.</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionIngestBody" class="section-body">
+            <div class="row2">
+              <div>
+                <label>Whisper Model</label>
+                <select id="whisperModel">
+                  <option value="small">small</option>
+                  <option value="medium" selected>medium</option>
+                  <option value="large-v2">large-v2</option>
+                  <option value="large-v3">large-v3</option>
+                </select>
+              </div>
+              <div>
+                <label>Language</label>
+                <select id="transcriptionLanguage">
+                  <option value="auto" selected>Auto</option>
+                  <option value="en">English</option>
+                  <option value="ru">Russian</option>
+                  <option value="he">Hebrew</option>
+                  <option value="es">Spanish</option>
+                </select>
+              </div>
+            </div>
+            <div class="row2" style="margin-top: 8px">
+              <div>
+                <label>Stem Device</label>
+                <select id="stemDevice">
+                  <option value="auto" selected>Auto</option>
+                  <option value="cuda">GPU / CUDA</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+              <div>
+                <label>Whisper Device</label>
+                <select id="whisperDevice">
+                  <option value="auto" selected>Auto</option>
+                  <option value="cuda">GPU / CUDA</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+            </div>
+            <div class="pipeline-section">
+              <label>Local Upload</label>
+              <div style="display: flex; gap: 8px">
+                <input type="file" id="sourceUpload" accept=".mp3,.mp4,.wav,.m4a,.flac,.webm,video/*,audio/*" style="padding: 4px" />
+                <button class="btn" onclick="uploadSourceFile()">Push</button>
+              </div>
+              <label style="margin-top: 12px">Web Fetch</label>
+              <div style="display: flex; gap: 8px">
+                <input type="text" id="sourceUrl" placeholder="https://youtube.com/watch?v=..." />
+                <button class="btn" onclick="submitSourceUrl()">Pull</button>
+              </div>
+              <select id="downloadEngine" style="margin-top: 8px;">
+                <option value="ytdl">yt-dlp</option>
+                <option value="metube">MeTube</option>
+              </select>
+            </div>
+            <div class="row2" style="margin-top: 12px">
+              <button class="btn btn-small btn-wide" onclick="autoTranscribe()">Force Transcribe</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionGrabLyricsBody', this)">
+            <span>
+              <span class="section-toggle-main">2. Grab Lyrics</span>
+              <span class="section-toggle-sub">Pick the service and pull lyrics into the editor.</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionGrabLyricsBody" class="section-body">
+            <label>Lyrics Service</label>
+            <select id="lyricsProvider">
+              <option value="lrclib" selected>lrclib</option>
+              <option value="genius">Genius</option>
+            </select>
+            <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Force Lyrics Grab</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionStatusBody', this)">
+            <span><span class="section-toggle-main">3. Edit &amp; Render</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionStatusBody" class="section-body">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
+              <span id="lyricsReadyBadge" class="state-badge state-waiting">Not Ready</span>
+            </div>
+            <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..."></textarea>
+            <div class="row2" style="margin-top: 10px;">
+              <button class="btn btn-wide" onclick="saveLyricsData()">Commit Lyrics</button>
+              <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming()" title="Rebuild word-level timing from current lyric lines">Auto-Correct Word Timing</button>
+            </div>
+            <div style="display:grid; grid-template-columns: 44px 1fr 44px; gap:8px; margin-top:10px; align-items:center;">
+              <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Older lyric revision">◀</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="revertLyricsRevision()" title="Load previous committed lyric revision">Revert Lyrics</button>
+              <button class="btn btn-small" onclick="stepLyricsRevision(1)" title="Newer lyric revision">▶</button>
+            </div>
+
+            <div class="pipeline-section" style="margin-top: 16px">
+              <label>Render Hardware</label>
+              <select id="renderDevice" style="margin-bottom: 8px">
+                <option value="auto">Auto</option>
+                <option value="cuda" selected>GPU / NVENC</option>
+                <option value="cpu">CPU</option>
+              </select>
+              <div class="row2">
+                <button class="btn btn-small" onclick="startRender(true)">Render Preview</button>
+                <button class="btn" style="background: var(--success)" onclick="startRender(false)">Export Final</button>
+              </div>
+              <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
+              <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="right-column">
+      <div class="top-panels">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionTopJobsBody', this)">
+            <span><span class="section-toggle-main">Active Jobs</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionTopJobsBody" class="section-body">
+            <div id="job-list" class="job-list">No jobs yet.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionThemeDebugBody', this)">
+            <span>
+              <span class="section-toggle-main">Theme &amp; Debug</span>
+              <span class="section-toggle-sub">Switch built-in UI themes and capture exact backend diagnostics.</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionThemeDebugBody" class="section-body">
+            <label>Theme</label>
+            <select id="themeSelect" onchange="applySelectedTheme()"></select>
+            <div id="themeMeta" class="theme-meta">Loading theme catalog...</div>
+            <div class="debug-actions">
+              <button class="btn btn-small" onclick="applySelectedTheme()">Apply Theme</button>
+              <button class="btn btn-small" onclick="runDebugger()">Run Debugger</button>
+              <button class="btn btn-small" onclick="copyDebugReport()">Copy Report</button>
+            </div>
+            <div id="debugSummary" class="debug-summary">Debugger idle.</div>
+            <div id="debugOutput" class="debug-output">No diagnostics captured yet.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionLibraryBody', this)">
+            <span><span class="section-toggle-main">Media Vault</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionLibraryBody" class="section-body">
+            <div id="file-vault" style="max-height: 200px; overflow-y: auto">Scanning files...</div>
+            <button class="btn btn-small btn-wide" onclick="loadFileManifest()">Refresh Vault</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-pane" id="previewPane">
+
+        <div id="canvas-wrapper">
+          <div class="preview-header-overlay">
+            <div class="compact-ctrl">
+              <span style="color: var(--text-muted)">Font</span>
+              <select id="fontSelect" onchange="updatePreview()"></select>
+            </div>
+
+            <div class="compact-ctrl">
+              <span style="color: var(--text-muted)">Size</span>
+              <input type="range" id="fontSize" min="20" max="500" step="1" value="130" oninput="document.getElementById('fontSizeNum').value=this.value; updatePreview()" style="width: 50px" />
+              <input type="number" id="fontSizeNum" min="20" max="500" value="130" oninput="document.getElementById('fontSize').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+            </div>
+
+            <div class="compact-ctrl" title="Line Spacing">
+              <span style="color: var(--text-muted)">Gap</span>
+              <input type="range" id="lineSpacing" min="0" max="100" step="1" value="30" oninput="document.getElementById('lineGapNum').value=this.value; updatePreview()" style="width: 50px" />
+              <input type="number" id="lineGapNum" min="0" max="100" value="30" oninput="document.getElementById('lineSpacing').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+            </div>
+
+            <div class="compact-ctrl" title="Word Padding">
+              <span style="color: var(--text-muted)">Pad</span>
+              <input type="range" id="wordPadding" min="0" max="50" step="1" value="0" oninput="document.getElementById('wordPadNum').value=this.value; updatePreview()" style="width: 50px" />
+              <input type="number" id="wordPadNum" min="0" max="50" value="0" oninput="document.getElementById('wordPadding').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+            </div>
+
+            <div class="compact-ctrl">
+              <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="updatePreview()" />
+              <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="updatePreview()" />
+              <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="updatePreview()" />
+            </div>
+
+            <div class="compact-ctrl">
+              <span style="color: var(--text-muted)">BG</span>
+              <input type="color" id="bgColor" value="#161f28" title="Background Color" oninput="updatePreview()" />
+              <select id="bgType" onchange="updatePreview()" style="width: 70px">
+                <option value="color">Solid</option><option value="gradient">Gradient</option><option value="spiral">Spiral FX</option><option value="image">Image</option>
+              </select>
+              <input type="file" id="bgUpload" accept="image/*" style="display: none" onchange="handleBgUpload(event)" />
+              <button type="button" class="btn btn-small" onclick="document.getElementById('bgUpload').click()" style="padding: 2px 6px">📁</button>
+            </div>
+
+            <div class="compact-ctrl">
+              <span style="color: var(--text-muted)">FX</span>
+              <select id="transitionStyle" onchange="updatePreview()" style="width: 65px">
+                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option>
+              </select>
+              <select id="fxScope" onchange="updatePreview()" style="width: 65px" title="Transition Scope">
+                <option value="page">Page</option><option value="line">Line</option>
+              </select>
+              <select id="fxSpeed" onchange="updatePreview()" style="width: 65px" title="Transition Speed">
+                <option value="0.2">Fast</option><option value="0.6" selected>Med</option><option value="1.2">Slow</option>
+              </select>
+            </div>
+
+            <div class="compact-ctrl">
+              <span style="color: var(--text-muted)">Mode</span>
+              <select id="textEffect" onchange="updatePreview()" style="width: 70px">
+                <option value="none">Flat</option><option value="shadow">Shadow</option><option value="hard-shadow">Hard Drop</option><option value="glow">Glow</option><option value="neon">Neon</option>
+              </select>
+              <select id="revealMode" onchange="updatePreview()" style="width: 75px" title="Reveal Mode">
+                <option value="block" selected>Block</option><option value="continuous">Scroll</option><option value="eager">Eager</option>
+              </select>
+              <select id="previewLineCount" onchange="updatePreview()" style="width: 50px">
+                <option value="2">2 Lns</option><option value="3" selected>3 Lns</option><option value="4">4 Lns</option>
+              </select>
+            </div>
+          </div>
+          <canvas id="videoCanvas" width="1920" height="1080"></canvas>
+        </div>
+
+        <div id="manualTimingPanel" class="integrated-timing-rail">
+          <div style="display: flex; align-items: center; gap: 12px; min-width: 200px">
+            <button class="btn btn-small" id="manualTimingBtn" onclick="toggleManualTiming()" style="background: var(--accent); color: #000">Timing Mode is OFF</button>
+            <div style="font-size: 11px; color: var(--text-muted)">Press <b>S</b> (Start) / <b>F</b> (End)</div>
+          </div>
+          <div style="flex: 1; text-align: center">
+            <span id="manualCurrentWord" class="manual-word" style="font-size: 16px">-</span>
+            <span id="manualProgressText" style="font-size: 11px; margin-left: 8px; color: var(--text-muted)">0 / 0</span>
+          </div>
+          <div style="display: flex; gap: 6px">
+            <button class="btn btn-small" onclick="manualTimingStepBackward()">Prev</button>
+            <button class="btn btn-small" onclick="manualTimingStepForward()">Next</button>
+            <button class="btn btn-small" onclick="resetManualTimingSession()">Reset</button>
+            <button class="btn btn-small" style="border-color: var(--success); color: var(--success)" onclick="applyManualTimingToLyrics()">Push to Editor</button>
+          </div>
+        </div>
+
+        <div class="media-controls">
+          <button class="btn" id="playBtn" onclick="togglePlayback()" style="min-width: 60px">Play</button>
+          <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
+          <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
+
+          <div class="media-inline-control" style="border-left: 1px solid var(--border); padding-left: 12px">
+            <label>Vol <span id="volumeValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+            <input type="range" id="volume" min="0" max="1" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+          </div>
+          <div class="media-inline-control">
+            <label>Spd</label>
+            <select id="playbackRate" onchange="onPlaybackRateChange()" style="padding: 4px; font-size: 11px; width: 55px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="1.5">1.5x</option>
+            </select>
+          </div>
+          <div class="media-inline-control">
+            <label>Res</label>
+            <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+              <option value="640x360">360p (640x360)</option>
+              <option value="960x540">540p (960x540)</option>
+              <option value="1280x720" selected>720p (1280x720)</option>
+              <option value="1920x1080">1080p (1920x1080)</option>
+            </select>
+          </div>
+          <div class="media-inline-control">
+            <label>Ptch <span id="pitchValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+            <input type="range" id="pitch" min="0.5" max="1.5" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+          </div>
+        </div>
+
+        <audio id="previewAudio" ontimeupdate="onAudioTimeUpdate()" onloadedmetadata="onAudioLoaded()"></audio>
+      </div>
+      </div>
+    </div>
+
+<script>
+      const canvas = document.getElementById("videoCanvas");
+      const ctx = canvas.getContext("2d");
+      const audio = document.getElementById("previewAudio");
+
+      let lyricLines = [];
+      let bgImageObj = null;
+      let selectedLrcFilename = "";
+      let selectedAudioFilename = "";
+      let selectedProjectName = "";
+      let selectedBgFile = null;
+      let jobPollTimer = null;
+      let lastJobStatusById = new Map();
+      let isSeekingPreview = false;
+      let previewConfigSnapshot = null;
+      let previewConfigLocked = false;
+      let manualTimingState = { enabled: false, words: [], entries: [], cursor: 0, activeStart: null, previewFromAppliedLyrics: false };
+      let manualTimingByAudio = {};
+      let manualTimingApplyInFlight = false;
+      let lyricsRevisionHistoryByAudio = {};
+      let lyricsRevisionCursorByAudio = {};
+      let themeCatalog = [];
+      let currentThemeId = "";
+      let frontendDebugIssues = [];
+      let lastDebugReportText = "";
+      let previewWidth = 1280;
+      let previewHeight = 720;
+      let previewShouldStartAtZero = false;
+      let karaokePlaceholderImg = null;
+
+      function _hexToRgbSafe(color) {
+        const raw = String(color || "").trim();
+        const m = raw.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+        if (!m) return null;
+        let hex = m[1];
+        if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+        return {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16),
+        };
+      }
+
+      function _rgbToHex(rgb) {
+        const ch = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+        return `#${ch(rgb.r)}${ch(rgb.g)}${ch(rgb.b)}`;
+      }
+
+      function _mixHex(c1, c2, t = 0.5) {
+        const a = _hexToRgbSafe(c1) || { r: 17, g: 24, b: 33 };
+        const b = _hexToRgbSafe(c2) || { r: 255, g: 255, b: 255 };
+        const k = Math.max(0, Math.min(1, Number(t) || 0));
+        return _rgbToHex({
+          r: a.r + ((b.r - a.r) * k),
+          g: a.g + ((b.g - a.g) * k),
+          b: a.b + ((b.b - a.b) * k),
+        });
+      }
+
+      function _relativeLuminance(hex) {
+        const rgb = _hexToRgbSafe(hex) || { r: 0, g: 0, b: 0 };
+        const toLinear = (v) => {
+          const c = v / 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        };
+        const r = toLinear(rgb.r);
+        const g = toLinear(rgb.g);
+        const b = toLinear(rgb.b);
+        return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+      }
+
+      function _contrastRatio(a, b) {
+        const l1 = _relativeLuminance(a);
+        const l2 = _relativeLuminance(b);
+        const hi = Math.max(l1, l2);
+        const lo = Math.min(l1, l2);
+        return (hi + 0.05) / (lo + 0.05);
+      }
+
+      function _pickReadableText(bgHex, candidates) {
+        const picks = (candidates || []).filter(Boolean);
+        if (picks.length === 0) return "#ffffff";
+        picks.sort((x, y) => _contrastRatio(y, bgHex) - _contrastRatio(x, bgHex));
+        return picks[0];
+      }
+
+      function applyControlContrastVars() {
+        const root = document.documentElement;
+        const styles = getComputedStyle(root);
+        const bgBase = (styles.getPropertyValue("--bg-base") || "#0b0c10").trim();
+        const bgSurface = (styles.getPropertyValue("--bg-surface") || "#1f2833").trim();
+        const accent = (styles.getPropertyValue("--accent") || "#45f3ff").trim();
+        const accentHover = (styles.getPropertyValue("--accent-hover") || accent).trim();
+        const textMain = (styles.getPropertyValue("--text-main") || "#c5c6c7").trim();
+
+        const controlBg = _mixHex(bgSurface, bgBase, 0.55);
+        const controlFg = _pickReadableText(controlBg, [textMain, "#ffffff", "#f8f8f8", "#111111", "#000000"]);
+        const buttonBg = accent;
+        const buttonFg = _pickReadableText(buttonBg, ["#111111", "#000000", "#ffffff", textMain]);
+        const buttonHoverBg = _contrastRatio(accentHover, buttonFg) >= 4.5 ? accentHover : _mixHex(accentHover, bgSurface, 0.2);
+        const labelColor = _contrastRatio(accentHover, bgSurface) >= 3.2 ? accentHover : _pickReadableText(bgSurface, [accent, "#ffffff", textMain]);
+        const controlBorder = _mixHex(accent, bgSurface, 0.35);
+        const buttonSmallFg = _pickReadableText(bgSurface, [textMain, "#ffffff", accentHover]);
+
+        root.style.setProperty("--label-color", labelColor);
+        root.style.setProperty("--control-bg", controlBg);
+        root.style.setProperty("--control-fg", controlFg);
+        root.style.setProperty("--control-border", controlBorder);
+        root.style.setProperty("--button-bg", buttonBg);
+        root.style.setProperty("--button-fg", buttonFg);
+        root.style.setProperty("--button-hover-bg", buttonHoverBg);
+        root.style.setProperty("--button-small-fg", buttonSmallFg);
+      }
+
+      function ensureKaraokePlaceholderImage() {
+        if (karaokePlaceholderImg) return karaokePlaceholderImg;
+        const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f005c"/>
+      <stop offset="35%" stop-color="#5b2c83"/>
+      <stop offset="65%" stop-color="#ff6b6b"/>
+      <stop offset="100%" stop-color="#ffd166"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect width="1280" height="720" fill="url(#halo)"/>
+  <circle cx="330" cy="190" r="55" fill="#fff" fill-opacity="0.15"/>
+  <circle cx="1030" cy="170" r="34" fill="#fff" fill-opacity="0.13"/>
+  <circle cx="940" cy="560" r="62" fill="#fff" fill-opacity="0.12"/>
+  <g transform="translate(560 255)">
+    <rect x="0" y="0" width="112" height="112" rx="56" fill="#fdfdfd" fill-opacity="0.92"/>
+    <rect x="42" y="92" width="28" height="120" rx="14" fill="#fdfdfd" fill-opacity="0.92"/>
+    <rect x="16" y="188" width="78" height="18" rx="9" fill="#fdfdfd" fill-opacity="0.92"/>
+  </g>
+  <text x="640" y="190" text-anchor="middle" font-size="66" font-family="Segoe UI, Arial, sans-serif" font-weight="800" fill="#ffffff">KARAOKE</text>
+  <text x="640" y="245" text-anchor="middle" font-size="30" font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="#ffffff" fill-opacity="0.92">PREVIEW STAGE</text>
+</svg>`;
+        karaokePlaceholderImg = new Image();
+        karaokePlaceholderImg.onload = () => updatePreview();
+        karaokePlaceholderImg.src = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+        return karaokePlaceholderImg;
+      }
+
+      function setPreviewCanvasSize(width, height) {
+        const safeW = Math.max(320, Number(width) || 1280);
+        const safeH = Math.max(180, Number(height) || 720);
+        if (canvas.width === safeW && canvas.height === safeH) return;
+        canvas.width = safeW;
+        canvas.height = safeH;
+        previewWidth = safeW;
+        previewHeight = safeH;
+      }
+
+      function onPreviewResolutionChange() {
+        const raw = document.getElementById("previewResolution")?.value || "1280x720";
+        const [w, h] = raw.split("x").map((v) => Number(v));
+        setPreviewCanvasSize(w, h);
+        smoothScrollY = 0;
+        updatePreview();
+      }
+
+      function getLyricsRevisionHistory(audioFilename) {
+        if (!audioFilename) return [];
+        if (!lyricsRevisionHistoryByAudio[audioFilename]) lyricsRevisionHistoryByAudio[audioFilename] = [];
+        return lyricsRevisionHistoryByAudio[audioFilename];
+      }
+
+      function addLyricsRevision(audioFilename, content, reason = "commit") {
+        if (!audioFilename) return;
+        const text = String(content || "");
+        const history = getLyricsRevisionHistory(audioFilename);
+        const last = history.length ? history[history.length - 1] : null;
+        if (last && last.content === text) return;
+        history.push({ content: text, reason, at: Date.now() });
+        lyricsRevisionCursorByAudio[audioFilename] = Math.max(0, history.length - 1);
+      }
+
+      function ensureLyricsRevisionSeed(content, reason = "seed") {
+        if (!selectedAudioFilename) return;
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        if (history.length === 0) addLyricsRevision(selectedAudioFilename, content, reason);
+      }
+
+      function formatRevisionLabel(entry) {
+        const dt = new Date(entry.at || Date.now());
+        return `${dt.toLocaleString()} (${entry.reason || "commit"})`;
+      }
+
+      function _getRevisionCursor(audioFilename) {
+        const history = getLyricsRevisionHistory(audioFilename);
+        if (history.length === 0) return -1;
+        let idx = Number(lyricsRevisionCursorByAudio[audioFilename]);
+        if (!Number.isFinite(idx)) idx = history.length - 1;
+        idx = Math.max(0, Math.min(history.length - 1, idx));
+        lyricsRevisionCursorByAudio[audioFilename] = idx;
+        return idx;
+      }
+
+      function _loadLyricsRevisionByIndex(audioFilename, idx) {
+        const history = getLyricsRevisionHistory(audioFilename);
+        if (history.length === 0) return false;
+        const clamped = Math.max(0, Math.min(history.length - 1, Number(idx) || 0));
+        const target = history[clamped];
+        lyricsRevisionCursorByAudio[audioFilename] = clamped;
+        document.getElementById("lyricsEditor").value = target.content || "";
+        parseLrcData(target.content || "");
+        manualTimingState.previewFromAppliedLyrics = true;
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+        const pos = clamped + 1;
+        setStatus(`Revision ${pos}/${history.length} loaded: ${formatRevisionLabel(target)}. Press Commit Lyrics to save it.`);
+        return true;
+      }
+
+      function stepLyricsRevision(delta) {
+        if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        if (history.length < 2) {
+          setStatus("No additional committed revisions yet.", true);
+          return;
+        }
+        const cursor = _getRevisionCursor(selectedAudioFilename);
+        const next = cursor + Number(delta || 0);
+        if (next < 0 || next >= history.length) {
+          setStatus(next < 0 ? "Already at oldest revision." : "Already at newest revision.");
+          return;
+        }
+        _loadLyricsRevisionByIndex(selectedAudioFilename, next);
+      }
+
+      async function revertLyricsRevision() {
+        if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        if (history.length < 2) {
+          setStatus("No earlier committed revisions yet.", true);
+          return;
+        }
+        // Keep center button as "step backward once" for quick revert behavior.
+        stepLyricsRevision(-1);
+      }
+
+      function toggleSection(sectionId, button) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        const collapsed = section.classList.toggle("hidden");
+        button.classList.toggle("collapsed", collapsed);
+      }
+
+      function onFontSizeChanged() { updatePreview(); }
+
+      function getThemeStorageKey() {
+        return "onepage-karaoke-theme-id";
+      }
+
+      function applyThemeVars(vars) {
+        const root = document.documentElement;
+        Object.entries(vars || {}).forEach(([key, value]) => {
+          root.style.setProperty(`--${key}`, value);
+        });
+      }
+
+      function updateThemeMeta(theme) {
+        const meta = document.getElementById("themeMeta");
+        if (!meta) return;
+        if (!theme) {
+          meta.textContent = "No theme metadata available.";
+          return;
+        }
+        const sourceBits = [theme.source_name, theme.license].filter(Boolean).join(" | ");
+        meta.textContent = [theme.description || "", sourceBits, theme.source_url || ""].filter(Boolean).join(" | ");
+      }
+
+      function applyThemeById(themeId, persist = true) {
+        const theme = themeCatalog.find((item) => item.id === themeId) || themeCatalog[0];
+        if (!theme) return;
+        currentThemeId = theme.id;
+        document.getElementById("themeSelect").value = theme.id;
+        applyThemeVars(theme.vars || {});
+        applyControlContrastVars();
+        updateThemeMeta(theme);
+        if (persist) localStorage.setItem(getThemeStorageKey(), theme.id);
+      }
+
+      function applySelectedTheme() {
+        const select = document.getElementById("themeSelect");
+        if (!select) return;
+        applyThemeById(select.value, true);
+      }
+
+      async function loadThemes() {
+        const select = document.getElementById("themeSelect");
+        if (!select) return;
+        try {
+          const res = await fetch("/api/themes");
+          const data = await res.json();
+          themeCatalog = data.themes || [];
+          select.innerHTML = "";
+          themeCatalog.forEach((theme) => {
+            const opt = document.createElement("option");
+            opt.value = theme.id;
+            opt.textContent = theme.name;
+            select.appendChild(opt);
+          });
+          const preferred = localStorage.getItem(getThemeStorageKey()) || (themeCatalog[0] && themeCatalog[0].id) || "";
+          applyThemeById(preferred, false);
+        } catch (err) {
+          document.getElementById("themeMeta").textContent = `Theme load failed: ${err}`;
+        }
+      }
+
+      function formatDebugIssue(issue) {
+        const file = issue.file || "(no file)";
+        const line = issue.line || 0;
+        const column = issue.column || 0;
+        const where = line ? `${file}:${line}${column ? `:${column}` : ""}` : file;
+        const parts = [`[${(issue.kind || "issue").toUpperCase()}] ${issue.message || "Unknown issue"}`, where];
+        if (issue.code) parts.push(issue.code);
+        if (issue.pointer) parts.push(issue.pointer);
+        if (issue.trace) parts.push(issue.trace);
+        return parts.join("\n");
+      }
+
+      function pushFrontendDebugIssue(issue) {
+        if (!issue) return;
+        frontendDebugIssues.unshift({
+          kind: "frontend",
+          severity: issue.severity || "error",
+          message: issue.message || "Unknown frontend issue",
+          file: issue.file || (issue.sourceURL || "index.html"),
+          line: Number(issue.line || 0),
+          column: Number(issue.column || 0),
+          code: issue.code || "",
+          trace: issue.trace || "",
+          at: Date.now(),
+        });
+        frontendDebugIssues = frontendDebugIssues.slice(0, 20);
+      }
+
+      window.addEventListener("error", (event) => {
+        pushFrontendDebugIssue({
+          message: event.message || "Unhandled frontend error",
+          file: event.filename || "index.html",
+          line: event.lineno || 0,
+          column: event.colno || 0,
+          trace: event.error && event.error.stack ? String(event.error.stack) : "",
+        });
+      });
+
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event.reason;
+        pushFrontendDebugIssue({
+          message: reason && reason.message ? reason.message : `Unhandled rejection: ${String(reason)}`,
+          file: "browser-promise",
+          trace: reason && reason.stack ? String(reason.stack) : "",
+        });
+      });
+
+      async function copyDebugReport() {
+        const output = lastDebugReportText || document.getElementById("debugOutput").textContent || "";
+        const summary = document.getElementById("debugSummary").textContent || "";
+        const full = `${summary}\n\n${output}`.trim();
+        if (!full) {
+          setStatus("No debug report to copy.", true);
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(full);
+          setStatus("Debug report copied to clipboard.");
+        } catch (err) {
+          setStatus(`Clipboard copy failed: ${err}`, true);
+        }
+      }
+
+      async function runDebugger() {
+        const summaryEl = document.getElementById("debugSummary");
+        const outputEl = document.getElementById("debugOutput");
+        summaryEl.textContent = "Capturing backend and frontend diagnostics...";
+        outputEl.textContent = "Running debugger...";
+        try {
+          const res = await fetch("/api/debug-report");
+          const data = await res.json();
+          const syntaxIssues = data.syntax_issues || [];
+          const runtimeIssues = data.runtime_issues || [];
+          const frontendIssues = frontendDebugIssues.slice();
+          summaryEl.textContent = `Syntax issues: ${syntaxIssues.length} | Runtime issues: ${runtimeIssues.length} | Frontend issues: ${frontendIssues.length}`;
+          const allIssues = [...frontendIssues, ...runtimeIssues, ...syntaxIssues];
+          lastDebugReportText = allIssues.length
+            ? allIssues.map(formatDebugIssue).join("\n\n------------------------------\n\n")
+            : "No backend syntax or runtime issues detected.";
+          outputEl.textContent = lastDebugReportText;
+        } catch (err) {
+          summaryEl.textContent = "Debugger request failed.";
+          lastDebugReportText = String(err);
+          outputEl.textContent = lastDebugReportText;
+        }
+      }
+
+      function appendTranscriptionSettings(fd) {
+        fd.append("stem_device", document.getElementById("stemDevice").value);
+        fd.append("whisper_device", document.getElementById("whisperDevice").value);
+        fd.append("whisper_model", document.getElementById("whisperModel").value);
+        fd.append("transcription_language", document.getElementById("transcriptionLanguage").value);
+      }
+
+      function capturePreviewConfig() {
+        return {
+          audio_filename: selectedAudioFilename,
+          font_name: document.getElementById("fontSelect").value || "Arial",
+          font_size: document.getElementById("fontSize").value,
+          line_spacing: document.getElementById("lineSpacing").value,
+          word_padding: document.getElementById("wordPadding").value,
+          primary_color: document.getElementById("primaryColor").value,
+          secondary_color: document.getElementById("secondaryColor").value,
+          outline_color: document.getElementById("outlineColor").value,
+          bg_type: document.getElementById("bgType").value,
+          bg_color: document.getElementById("bgColor").value,
+          transition_style: document.getElementById("transitionStyle").value,
+          fx_scope: document.getElementById("fxScope").value,
+          fx_speed: document.getElementById("fxSpeed").value,
+          text_effect: document.getElementById("textEffect").value,
+          reveal_mode: document.getElementById("revealMode").value,
+          preview_line_count: document.getElementById("previewLineCount").value,
+          pitch: document.getElementById("pitch").value,
+          volume: document.getElementById("volume").value,
+          render_device: document.getElementById("renderDevice").value,
+        };
+      }
+
+      function formatLrcTime(seconds) {
+        const safe = Math.max(0, Number(seconds || 0));
+        const mins = Math.floor(safe / 60);
+        const secs = safe - mins * 60;
+        return `${String(mins).padStart(2, "0")}:${secs.toFixed(2).padStart(5, "0")}`;
+      }
+
+      function extractWordsFromEditor() {
+        const editorText = document.getElementById("lyricsEditor").value || "";
+        const stripped = editorText.replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ");
+        return stripped.match(/\S+/g) || [];
+      }
+
+      function buildTimedWordEntriesFromLyrics() {
+        const entries = [];
+        lyricLines.forEach((item, idx) => {
+          const nextTime = lyricLines[idx + 1] ? lyricLines[idx + 1].time : item.time + 3.0;
+          const words = (item.text || "").split(" ").filter(Boolean);
+          if (!words.length) return;
+          const perWord = Math.max(0.02, (nextTime - item.time) / words.length);
+          words.forEach((word, wordIdx) => {
+            const start = item.time + (wordIdx * perWord);
+            entries.push({
+              word,
+              start,
+              end: start + perWord,
+            });
+          });
+        });
+        return entries;
+      }
+
+      function findManualCursorIndexAtTime(nowSec) {
+        const entries = manualTimingState.entries || [];
+        if (!entries.length) return 0;
+
+        for (let i = 0; i < entries.length; i += 1) {
+          const entry = entries[i];
+          if (!entry || !Number.isFinite(entry.start)) continue;
+          const end = Number.isFinite(entry.end) ? entry.end : (entry.start + 0.3);
+          if (nowSec >= entry.start && nowSec < end) return i;
+          if (nowSec < entry.start) return i;
+        }
+        return Math.max(0, entries.length - 1);
+      }
+
+      function alignManualTimingToCurrentPlayback() {
+        const now = Number(audio.currentTime || 0);
+        const totalWords = manualTimingState.words.length;
+        if (totalWords === 0) {
+          manualTimingState.cursor = 0;
+          manualTimingState.activeStart = null;
+          return;
+        }
+
+        let cursor = findManualCursorIndexAtTime(now);
+        if (!manualTimingState.entries.length) {
+          const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
+          if (dur > 0) {
+            const ratio = Math.max(0, Math.min(1, now / dur));
+            cursor = Math.min(totalWords - 1, Math.floor(ratio * totalWords));
+          } else {
+            cursor = Math.min(totalWords - 1, cursor);
+          }
+        }
+        manualTimingState.cursor = Math.max(0, Math.min(totalWords - 1, cursor));
+        manualTimingState.activeStart = null;
+      }
+
+      async function autoSaveManualTimingDraft() {
+        if (!selectedAudioFilename) return;
+        try {
+          persistManualTiming();
+          const fd = new FormData();
+          fd.append("audio_filename", selectedAudioFilename);
+          fd.append("state_json", JSON.stringify(collectProjectState()));
+          await fetch("/api/save-project-state", { method: "POST", body: fd });
+        } catch (err) {
+          console.warn("Auto-save manual timing draft failed", err);
+        }
+      }
+
+      async function toggleManualTiming() {
+        if (!selectedAudioFilename) { alert("Select source media first."); return; }
+        manualTimingState.enabled = !manualTimingState.enabled;
+        document.getElementById("manualTimingBtn").textContent = manualTimingState.enabled ? "Timing Mode is ON" : "Enable Timing Mode";
+        if (manualTimingState.enabled) {
+          const existing = manualTimingByAudio[selectedAudioFilename];
+          if (existing) {
+            manualTimingState.words = existing.words.slice();
+            manualTimingState.entries = existing.entries.map((item) => ({ ...item }));
+            manualTimingState.cursor = existing.cursor;
+            manualTimingState.activeStart = existing.activeStart;
+            manualTimingState.previewFromAppliedLyrics = !!existing.previewFromAppliedLyrics;
+          } else {
+            const seededEntries = buildTimedWordEntriesFromLyrics();
+            if (seededEntries.length > 0) {
+              manualTimingState.words = seededEntries.map((item) => item.word);
+              manualTimingState.entries = seededEntries.map((item) => ({ ...item }));
+              manualTimingState.cursor = 0;
+              manualTimingState.activeStart = null;
+              manualTimingState.previewFromAppliedLyrics = false;
+              persistManualTiming();
+            } else {
+              resetManualTimingSession();
+            }
+          }
+          alignManualTimingToCurrentPlayback();
+          setStatus("Manual timing enabled at current playback word. Use 'S' at start of word and 'F' at end of word.");
+        } else {
+          persistManualTiming();
+          await autoSaveManualTimingDraft();
+          setStatus("Manual timing disabled. Draft timing auto-saved.");
+        }
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function persistManualTiming() {
+        if (!selectedAudioFilename) return;
+        manualTimingByAudio[selectedAudioFilename] = {
+          words: manualTimingState.words.slice(),
+          entries: manualTimingState.entries.map((item) => ({ ...item })),
+          cursor: manualTimingState.cursor,
+          activeStart: manualTimingState.activeStart,
+          previewFromAppliedLyrics: manualTimingState.previewFromAppliedLyrics,
+        };
+      }
+
+      function resetManualTimingSession() {
+        manualTimingState.words = extractWordsFromEditor();
+        manualTimingState.entries = [];
+        manualTimingState.cursor = 0;
+        manualTimingState.activeStart = null;
+        manualTimingState.previewFromAppliedLyrics = true;
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function updateManualTimingHud() {
+        const total = manualTimingState.words.length;
+        const currentWord = manualTimingState.words[manualTimingState.cursor] || "-";
+        const timedCount = manualTimingState.entries.filter((entry) => Number.isFinite(entry.start)).length;
+        document.getElementById("manualCurrentWord").textContent = currentWord;
+        document.getElementById("manualProgressText").textContent = `${Math.min(timedCount, total)} / ${total}`;
+      }
+
+      function estimateActiveWordDuration() {
+        const completedDurations = manualTimingState.entries
+          .map((entry, idx) => ({ entry, idx }))
+          .filter(({ entry, idx }) => idx < manualTimingState.cursor && entry && Number.isFinite(entry.start) && Number.isFinite(entry.end) && entry.end > entry.start)
+          .map(({ entry }) => entry.end - entry.start)
+          .slice(-4);
+
+        if (completedDurations.length > 0) {
+          const avg = completedDurations.reduce((sum, d) => sum + d, 0) / completedDurations.length;
+          return Math.max(0.12, Math.min(2.5, avg));
+        }
+        return 0.45;
+      }
+
+      function manualTimingStepBackward() {
+        if (manualTimingState.words.length === 0) return;
+        manualTimingState.activeStart = null;
+        const newCursor = Math.max(0, manualTimingState.cursor - 1);
+        manualTimingState.cursor = newCursor;
+        manualTimingState.entries = manualTimingState.entries.slice(0, newCursor);
+        manualTimingState.previewFromAppliedLyrics = false;
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function manualTimingStepForward() {
+        if (manualTimingState.words.length === 0) return;
+        manualTimingState.activeStart = null;
+        manualTimingState.cursor = Math.min(manualTimingState.words.length - 1, manualTimingState.cursor + 1);
+        manualTimingState.previewFromAppliedLyrics = false;
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function captureManualWordStart() {
+        if (!manualTimingState.enabled || manualTimingState.words.length === 0 || manualTimingState.cursor >= manualTimingState.words.length) return;
+        const now = Number(audio.currentTime || 0);
+        manualTimingState.previewFromAppliedLyrics = false;
+        if (manualTimingState.activeStart !== null) {
+          const word = manualTimingState.words[manualTimingState.cursor];
+          manualTimingState.entries[manualTimingState.cursor] = { word, start: manualTimingState.activeStart, end: Math.max(now, manualTimingState.activeStart + 0.02) };
+          manualTimingState.cursor += 1;
+          if (manualTimingState.cursor < manualTimingState.words.length) {
+            const nextWord = manualTimingState.words[manualTimingState.cursor];
+            manualTimingState.activeStart = now;
+            manualTimingState.entries[manualTimingState.cursor] = { word: nextWord, start: now, end: null };
+          } else {
+            manualTimingState.activeStart = null;
+          }
+        } else {
+          const word = manualTimingState.words[manualTimingState.cursor];
+          manualTimingState.activeStart = now;
+          manualTimingState.entries[manualTimingState.cursor] = { word, start: now, end: null };
+        }
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function captureManualWordEnd() {
+        if (!manualTimingState.enabled || manualTimingState.words.length === 0 || manualTimingState.cursor >= manualTimingState.words.length) return;
+        const now = Number(audio.currentTime || 0);
+        const existing = manualTimingState.entries[manualTimingState.cursor] || {};
+        let start = manualTimingState.activeStart;
+
+        // If no explicit start was captured with S, allow F to close the selected
+        // word using an existing/inferred start so key presses still register.
+        if (!Number.isFinite(start)) {
+          if (Number.isFinite(existing.start)) {
+            start = Number(existing.start);
+          } else {
+            const inferred = now - estimateActiveWordDuration();
+            start = Math.max(0, inferred);
+          }
+        }
+
+        manualTimingState.previewFromAppliedLyrics = false;
+        const word = manualTimingState.words[manualTimingState.cursor];
+        manualTimingState.entries[manualTimingState.cursor] = { word, start, end: Math.max(now, start + 0.02) };
+        manualTimingState.cursor += 1;
+
+        // F only closes the current word and creates a pause. The next word
+        // does not start until S is pressed.
+        manualTimingState.activeStart = null;
+
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      function isTypingTarget(target) {
+        if (!target) return false;
+        const tag = (target.tagName || "").toLowerCase();
+        if (tag === "textarea" || target.isContentEditable) return true;
+        if (tag !== "input") return false;
+        const inputType = String(target.type || "").toLowerCase();
+        return ["text", "search", "email", "url", "tel", "password", "number"].includes(inputType);
+      }
+
+      document.addEventListener("keydown", (event) => {
+        if (!manualTimingState.enabled) return;
+        if (event.repeat) return;
+        const key = (event.key || "").toLowerCase();
+        // In timing mode, capture S/F even if editor focus is in an input/textarea.
+        if (isTypingTarget(event.target) && key !== "s" && key !== "f") return;
+        if (key === "s") {
+          event.preventDefault();
+          captureManualWordStart();
+        } else if (key === "f") {
+          event.preventDefault();
+          captureManualWordEnd();
+        }
+      });
+
+      function buildManualTimingLrc() {
+        if (!manualTimingState.entries.length) return "";
+
+        const allWords = extractWordsFromEditor();
+        if (!allWords.length) return "";
+
+        const manualTimed = manualTimingState.entries
+          .filter((e) => e && Number.isFinite(e.start) && e.word)
+          .map((e) => ({ word: String(e.word || "").trim(), start: Number(e.start) }))
+          .filter((e) => e.word);
+
+        if (!manualTimed.length) return "";
+
+        // Preserve the full lyric body: apply manual timing where available,
+        // keep remaining words using existing fallback timing so text is not lost.
+        const fallback = buildTimedWordEntriesFromLyrics();
+        const out = [];
+        let lastTime = 0;
+        for (let i = 0; i < allWords.length; i += 1) {
+          let start = null;
+          if (i < manualTimed.length) {
+            start = manualTimed[i].start;
+          } else if (fallback[i] && Number.isFinite(fallback[i].start)) {
+            start = Number(fallback[i].start);
+          } else {
+            start = lastTime + 0.35;
+          }
+          const safeStart = Math.max(lastTime, Number(start) || 0);
+          out.push(`[${formatLrcTime(safeStart)}]${allWords[i]}`);
+          lastTime = safeStart;
+        }
+        return out.join("\n");
+      }
+
+      async function applyManualTimingToLyrics() {
+        const lrc = buildManualTimingLrc();
+        if (!lrc) { setStatus("No manual timing entries yet.", true); return; }
+        if (!selectedLrcFilename) { setStatus("Select source media first.", true); return; }
+        manualTimingApplyInFlight = true;
+        document.getElementById("lyricsEditor").value = lrc;
+        parseLrcData(lrc);
+        manualTimingState.previewFromAppliedLyrics = true;
+        persistManualTiming();
+        updatePreview();
+        try {
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", lrc);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message);
+          setStatus(data.message || "Manual timing applied and saved.");
+        } catch (err) { setStatus(`Failed to save: ${err}`, true); }
+        finally { manualTimingApplyInFlight = false; }
+      }
+
+      function updateTuneValueLabels() {
+        const vol = Number(document.getElementById("volume")?.value || 1);
+        const pitch = Number(document.getElementById("pitch")?.value || 1);
+        const volEl = document.getElementById("volumeValue");
+        const pitchEl = document.getElementById("pitchValue");
+        if (volEl) volEl.textContent = vol.toFixed(2);
+        if (pitchEl) pitchEl.textContent = pitch.toFixed(2);
+      }
+
+      function updateLyricsReadyIndicator() {
+        const badge = document.getElementById("lyricsReadyBadge");
+        const ready = lyricLines.length > 0;
+        badge.className = `state-badge ${ready ? "state-ready" : "state-waiting"}`;
+        badge.textContent = ready ? "Ready" : "Pending";
+        document.getElementById("activeLyricsLabel").style.color = ready ? "var(--success)" : "var(--text-muted)";
+      }
+
+      function renderJobs(jobs) {
+        const container = document.getElementById("job-list");
+        if (!jobs || jobs.length === 0) {
+          container.textContent = selectedProjectName ? `No active jobs for ${selectedProjectName}.` : "No jobs yet.";
+          return;
+        }
+        container.innerHTML = "";
+        jobs.forEach((job) => {
+          const item = document.createElement("div");
+          item.className = `job-item`;
+          const canCancel = job.status === "queued" || job.status === "running";
+          const statClass = `state-${job.status || "waiting"}`;
+          const liveStage = job.stage || job.label || "Working";
+          const metaBits = [];
+          if (job.project_name) metaBits.push(`Project: ${job.project_name}`);
+          if (job.audio_filename) metaBits.push(`Source: ${job.audio_filename}`);
+          if (job.output_filename) metaBits.push(`Output: ${job.output_filename}`);
+          const metaText = metaBits.join(" | ");
+          item.innerHTML = `
+            <div class="job-top"><div><div class="job-label">${liveStage}</div><div class="job-sub" title="${job.label || ""}">${job.label || ""}</div></div><span class="state-badge ${statClass}">${job.status}</span></div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${job.message || ""}</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px; word-break:break-word;">${metaText}</div>
+            <div class="job-bar"><div class="job-bar-fill" style="width:${Math.max(0, Math.min(100, job.progress || 0))}%;"></div></div>
+            <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center;">
+                <span style="font-size:11px;">${job.progress || 0}%</span>
+                ${canCancel ? `<button class="btn btn-small" data-job-id="${job.id}">Cancel</button>` : `<span style="font-size:11px;">${job.audio_filename || ""}</span>`}
+            </div>`;
+          if (canCancel) item.querySelector("button").addEventListener("click", () => cancelJob(job.id));
+          container.appendChild(item);
+        });
+      }
+
+      async function loadJobs() {
+        try {
+          const query = selectedProjectName ? `?project_name=${encodeURIComponent(selectedProjectName)}` : "";
+          const { data } = await fetchJsonSafe(`/api/jobs${query}`, {}, "Jobs API");
+          const jobs = data.jobs || [];
+          let shouldRefreshVault = false;
+          const nextStatuses = new Map();
+          jobs.forEach((job) => {
+            nextStatuses.set(job.id, job.status);
+            const prevStatus = lastJobStatusById.get(job.id);
+            if (prevStatus && prevStatus !== job.status && ["completed", "failed", "cancelled"].includes(job.status)) {
+              shouldRefreshVault = true;
+            }
+          });
+          for (const [jobId, prevStatus] of lastJobStatusById.entries()) {
+            if (!nextStatuses.has(jobId) && ["queued", "running"].includes(prevStatus)) {
+              shouldRefreshVault = true;
+            }
+          }
+          lastJobStatusById = nextStatuses;
+
+          renderJobs(jobs);
+          if (shouldRefreshVault) await loadFileManifest();
+          if (selectedAudioFilename) {
+            const hasActiveIngestJob = jobs.some((job) => {
+              if (!job || !job.status) return false;
+              const active = job.status === "queued" || job.status === "running";
+              const ingestLike = ["url", "pipeline", "lyrics", "word_timing"].includes((job.type || "").toLowerCase());
+              return active && ingestLike;
+            });
+            await refreshSelectedLyricsIfReady(hasActiveIngestJob || shouldRefreshVault);
+          }
+        } catch (err) { setStatus(`Status error: ${err}`, true); }
+      }
+
+      async function cancelJob(jobId) {
+        const { res, data } = await fetchJsonSafe(
+          `/api/jobs/${encodeURIComponent(jobId)}/cancel`,
+          { method: "POST" },
+          "Cancel job API",
+        );
+        setStatus(data.message || (res.ok ? "Cancellation requested." : "Cancel failed."), !res.ok);
+        await loadJobs();
+      }
+
+      async function refreshSelectedLyricsIfReady(force = false) {
+        if (!force) return;
+        if (!selectedLrcFilename || manualTimingApplyInFlight || (manualTimingState.enabled && manualTimingState.previewFromAppliedLyrics)) return;
+        const res = await fetch(`/api/load-lyrics?filename=${encodeURIComponent(selectedLrcFilename)}`);
+        const data = await res.json();
+        const existing = document.getElementById("lyricsEditor").value || "";
+        if ((data.content || "") && data.content !== existing) {
+          ensureLyricsRevisionSeed(existing, "loaded");
+          document.getElementById("lyricsEditor").value = data.content;
+          parseLrcData(data.content);
+          addLyricsRevision(selectedAudioFilename, data.content, "backend-update");
+          manualTimingState.previewFromAppliedLyrics = true;
+          persistManualTiming();
+          updatePreview();
+          setStatus(`Lyrics loaded.`);
+        }
+      }
+
+      async function uploadSourceFile() {
+        const input = document.getElementById("sourceUpload");
+        const file = input.files[0];
+        if (!file) { alert("Choose a source file."); return; }
+        const fd = new FormData();
+        fd.append("file", file);
+        appendTranscriptionSettings(fd);
+        setStatus(`Uploading ${file.name}...`);
+        const res = await fetch("/api/upload-file", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "Upload started." : "Upload failed."), !res.ok);
+        if (res.ok) { input.value = ""; await loadFileManifest(); await loadJobs(); }
+      }
+
+      async function submitSourceUrl() {
+        const url = document.getElementById("sourceUrl").value.trim();
+        if (!url) { alert("Paste a URL."); return; }
+        const fd = new FormData();
+        fd.append("url", url);
+        fd.append("engine", document.getElementById("downloadEngine").value);
+        appendTranscriptionSettings(fd);
+        setStatus("Fetching URL...");
+        const res = await fetch("/api/process-url", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "URL accepted." : "URL failed."), !res.ok);
+        if (res.ok) await loadJobs();
+      }
+
+      function setStatus(message, isError = false) {
+        const el = document.getElementById("actionStatus");
+        el.textContent = message;
+        el.style.color = isError ? "var(--danger)" : "var(--text-muted)";
+      }
+
+      async function fetchJsonSafe(url, options = {}, label = "Request") {
+        const res = await fetch(url, options);
+        const ctype = (res.headers.get("content-type") || "").toLowerCase();
+        if (ctype.includes("application/json")) {
+          const data = await res.json();
+          return { res, data };
+        }
+        const raw = await res.text();
+        const brief = String(raw || "").replace(/\s+/g, " ").slice(0, 140);
+        throw new Error(`${label} returned non-JSON (HTTP ${res.status}). ${brief || "No response body."}`);
+      }
+
+      async function loadFonts() {
+        const select = document.getElementById("fontSelect");
+        if (!select) return;
+        try {
+          const res = await fetch("/api/get-fonts");
+          if (!res.ok) throw new Error("Backend font API failed");
+          const data = await res.json();
+          select.innerHTML = '<option value="Arial">Arial</option>';
+
+          if (data.fonts && data.fonts.length > 0) {
+            data.fonts.forEach((f) => {
+              const opt = document.createElement("option");
+              opt.value = f.name; opt.textContent = f.name;
+              select.appendChild(opt);
+              new FontFace(f.name, `url(/fonts/${f.filename})`)
+                .load().then((face) => document.fonts.add(face))
+                .catch((e) => console.warn(`Could not load font preview for ${f.name}`));
+            });
+          }
+        } catch (e) {
+          console.error("Font load error:", e);
+          if (select.options.length === 0) select.innerHTML = '<option value="Arial">Arial</option>';
+        }
+      }
+
+      async function loadFileManifest() {
+        const res = await fetch("/api/list-files?sources_only=true");
+        const data = await res.json();
+        const container = document.getElementById("file-vault");
+        container.innerHTML = "";
+        if (!data.files || data.files.length === 0) { container.textContent = "No media found."; return; }
+        data.files.forEach((f) => {
+          const row = document.createElement("div"); row.className = "file-row";
+          const projectLabel = f.project_name || f.name;
+          const lrcStateClass = f.has_timed_lyrics ? "state-ready" : "state-waiting";
+          const lrcStateText = f.has_timed_lyrics ? "LRC Ready" : "LRC Missing";
+          const saveStateClass = f.has_proj ? "state-completed" : "state-waiting";
+          const saveStateText = f.has_proj ? "Saved" : "Unsaved";
+          row.innerHTML = `
+            <div class="file-row-main">
+              <span class="file-name" title="${projectLabel}">${projectLabel}</span>
+            </div>
+            <div class="file-row-actions">
+              <button class="btn btn-small vault-btn state-badge ${lrcStateClass}" data-action="lrc-state" title="Lyric timing status for this project" disabled>${lrcStateText}</button>
+              <button class="btn btn-small vault-btn state-badge ${saveStateClass}" data-action="save-state" title="Saved project snapshot status" disabled>${saveStateText}</button>
+              <button class="btn btn-small vault-btn" data-action="use" title="Load this project into editor and preview">Load</button>
+              <button class="btn btn-small vault-btn" data-action="rename" title="Rename this project folder">Rename</button>
+              <button class="btn btn-small vault-btn" style="border-color:var(--danger); color:var(--danger);" data-action="remove" title="Delete this project and all files">Remove</button>
+            </div>`;
+          if (selectedAudioFilename === f.audio_filename) row.classList.add("file-row-active");
+          row.querySelector('[data-action="use"]').addEventListener("click", () => stageTrackTarget(f.url, f.audio_filename, f.project_name));
+          row.querySelector('[data-action="rename"]').addEventListener("click", () => beginRenameMedia(f.audio_filename, projectLabel));
+          row.querySelector('[data-action="remove"]').addEventListener("click", () => deleteMediaAsset(f.audio_filename, projectLabel));
+          container.appendChild(row);
+        });
+      }
+
+      async function beginRenameMedia(filename, currentProjectName = "") {
+        const current = currentProjectName || filename.split("/")[0] || filename.replace(/\.[^/.]+$/, "");
+        const proposed = prompt("Rename project:", current);
+        if (proposed === null) return;
+        const trimmed = proposed.trim();
+        if (!trimmed) { setStatus("Project rename cancelled: empty name.", true); return; }
+        await renameMediaAsset(filename, trimmed);
+      }
+
+      async function renameMediaAsset(oldFilename, newProjectName) {
+        const fd = new FormData();
+        fd.append("audio_filename", oldFilename);
+        fd.append("new_name", newProjectName);
+        const res = await fetch("/api/rename-media", { method: "POST", body: fd });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setStatus(data.message || "Rename failed.", true);
+          return;
+        }
+
+        const renamedAudio = data.audio_filename || oldFilename;
+        const renamedProject = data.project_name || newProjectName;
+        if (selectedAudioFilename === oldFilename) {
+          if (manualTimingByAudio[oldFilename]) {
+            manualTimingByAudio[renamedAudio] = manualTimingByAudio[oldFilename];
+            delete manualTimingByAudio[oldFilename];
+          }
+          if (lyricsRevisionHistoryByAudio[oldFilename]) {
+            lyricsRevisionHistoryByAudio[renamedAudio] = lyricsRevisionHistoryByAudio[oldFilename];
+            delete lyricsRevisionHistoryByAudio[oldFilename];
+          }
+          if (Object.prototype.hasOwnProperty.call(lyricsRevisionCursorByAudio, oldFilename)) {
+            lyricsRevisionCursorByAudio[renamedAudio] = lyricsRevisionCursorByAudio[oldFilename];
+            delete lyricsRevisionCursorByAudio[oldFilename];
+          }
+          await stageTrackTarget(data.audio_url || `/files/${encodeURIComponent(renamedAudio).replace(/%2F/g, "/")}`, renamedAudio, renamedProject);
+          if (data.lrc_filename) {
+            selectedLrcFilename = data.lrc_filename;
+            document.getElementById("activeLyricsLabel").textContent = `Editing: ${selectedLrcFilename}`;
+          }
+        }
+
+        setStatus(data.message || "Project renamed.");
+        await loadFileManifest();
+        await loadJobs();
+      }
+
+      async function deleteMediaAsset(filename, projectName = "") {
+        const label = projectName || (filename || "").split("/")[0] || filename;
+        if (!confirm(`Are you sure you want to remove this project: ${label}?`)) return;
+        const fd = new FormData(); fd.append("audio_filename", filename);
+        const res = await fetch("/api/delete-media", { method: "POST", body: fd });
+        const data = await res.json();
+        if (selectedAudioFilename === filename) {
+          selectedAudioFilename = selectedLrcFilename = selectedProjectName = "";
+          delete manualTimingByAudio[filename];
+          delete lyricsRevisionHistoryByAudio[filename];
+          document.getElementById("lyricsEditor").value = "";
+          lyricLines = []; audio.pause(); audio.removeAttribute("src"); audio.load();
+          document.getElementById("activeLyricsLabel").textContent = "No media mounted";
+          updateLyricsReadyIndicator(); updatePreview();
+        }
+        setStatus(data.message || (res.ok ? "Deleted." : "Delete failed."), !res.ok);
+        await loadFileManifest(); await loadJobs();
+      }
+
+      async function stageTrackTarget(audioUrl, filename, projectName = "") {
+        if (manualTimingState.enabled) persistManualTiming();
+        selectedAudioFilename = filename;
+        selectedProjectName = projectName || (filename || "").split("/")[0] || "";
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        audio.src = audioUrl;
+        previewShouldStartAtZero = true;
+        applyPreviewAudioTuning();
+        selectedLrcFilename = `${filename.slice(0, filename.lastIndexOf(".")) || filename}.lrc`;
+        document.getElementById("activeLyricsLabel").textContent = `Editing: ${selectedLrcFilename}`;
+        const res = await fetch(`/api/load-lyrics?filename=${encodeURIComponent(selectedLrcFilename)}`);
+        const data = await res.json();
+        document.getElementById("lyricsEditor").value = data.content || "";
+        parseLrcData(data.content || "");
+        lyricsRevisionHistoryByAudio[selectedAudioFilename] = [];
+        lyricsRevisionCursorByAudio[selectedAudioFilename] = 0;
+        ensureLyricsRevisionSeed(data.content || "", "loaded");
+
+        const existing = manualTimingByAudio[selectedAudioFilename];
+        if (existing) {
+          manualTimingState.words = existing.words.slice();
+          manualTimingState.entries = existing.entries.map((item) => ({ ...item }));
+          manualTimingState.cursor = existing.cursor;
+          manualTimingState.activeStart = existing.activeStart;
+          manualTimingState.previewFromAppliedLyrics = !!existing.previewFromAppliedLyrics;
+        } else {
+          manualTimingState.words = extractWordsFromEditor();
+          manualTimingState.entries = []; manualTimingState.cursor = 0; manualTimingState.activeStart = null; manualTimingState.previewFromAppliedLyrics = false;
+        }
+        await loadProjectSnapshot();
+        updateManualTimingHud(); updateLyricsReadyIndicator(); updatePreview();
+        await loadJobs();
+        await loadFileManifest();
+      }
+
+      function collectProjectState() {
+        return {
+          preview: {
+            fontSelect: document.getElementById("fontSelect").value,
+            fontSize: document.getElementById("fontSize").value,
+            lineSpacing: document.getElementById("lineSpacing").value,
+            wordPadding: document.getElementById("wordPadding").value,
+            primaryColor: document.getElementById("primaryColor").value,
+            secondaryColor: document.getElementById("secondaryColor").value,
+            outlineColor: document.getElementById("outlineColor").value,
+            bgColor: document.getElementById("bgColor").value,
+            bgType: document.getElementById("bgType").value,
+            transitionStyle: document.getElementById("transitionStyle").value,
+            textEffect: document.getElementById("textEffect").value,
+            fxScope: document.getElementById("fxScope").value,
+            fxSpeed: document.getElementById("fxSpeed").value,
+            revealMode: document.getElementById("revealMode").value,
+            previewLineCount: document.getElementById("previewLineCount").value,
+            playbackRate: document.getElementById("playbackRate").value,
+            volume: document.getElementById("volume").value,
+            pitch: document.getElementById("pitch").value,
+          },
+          lyricsText: document.getElementById("lyricsEditor").value || "",
+          manualTiming: manualTimingByAudio[selectedAudioFilename] || {
+            words: manualTimingState.words,
+            entries: manualTimingState.entries,
+            cursor: manualTimingState.cursor,
+            activeStart: manualTimingState.activeStart,
+            previewFromAppliedLyrics: manualTimingState.previewFromAppliedLyrics,
+          },
+          lyricRevisions: lyricsRevisionHistoryByAudio[selectedAudioFilename] || [],
+          uiThemeId: currentThemeId,
+        };
+      }
+
+      function applyProjectState(state) {
+        if (!state) return;
+        const preview = state.preview || {};
+        const setIf = (id, value) => {
+          if (value === undefined || value === null) return;
+          const el = document.getElementById(id);
+          if (el) el.value = value;
+        };
+        setIf("fontSelect", preview.fontSelect);
+        setIf("fontSize", preview.fontSize);
+        setIf("fontSizeNum", preview.fontSize || preview.fontSizeNum);
+        setIf("lineSpacing", preview.lineSpacing);
+        setIf("lineGapNum", preview.lineSpacing || preview.lineGapNum);
+        setIf("wordPadding", preview.wordPadding);
+        setIf("wordPadNum", preview.wordPadding || preview.wordPadNum);
+        setIf("primaryColor", preview.primaryColor);
+        setIf("secondaryColor", preview.secondaryColor);
+        setIf("outlineColor", preview.outlineColor);
+        setIf("bgColor", preview.bgColor);
+        setIf("bgType", preview.bgType);
+        setIf("transitionStyle", preview.transitionStyle);
+        setIf("textEffect", preview.textEffect);
+        setIf("fxScope", preview.fxScope);
+        setIf("fxSpeed", preview.fxSpeed);
+        setIf("revealMode", preview.revealMode);
+        setIf("previewLineCount", preview.previewLineCount);
+        setIf("playbackRate", preview.playbackRate);
+        setIf("volume", preview.volume);
+        setIf("pitch", preview.pitch);
+
+        if (state.lyricsText) {
+          document.getElementById("lyricsEditor").value = state.lyricsText;
+          parseLrcData(state.lyricsText);
+        }
+
+        if (state.manualTiming && selectedAudioFilename) {
+          manualTimingByAudio[selectedAudioFilename] = state.manualTiming;
+          if (manualTimingState.enabled) {
+            manualTimingState.words = (state.manualTiming.words || []).slice();
+            manualTimingState.entries = (state.manualTiming.entries || []).map((item) => ({ ...item }));
+            manualTimingState.cursor = Number(state.manualTiming.cursor || 0);
+            manualTimingState.activeStart = state.manualTiming.activeStart ?? null;
+            manualTimingState.previewFromAppliedLyrics = !!state.manualTiming.previewFromAppliedLyrics;
+          }
+        }
+
+        if (selectedAudioFilename && Array.isArray(state.lyricRevisions)) {
+          lyricsRevisionHistoryByAudio[selectedAudioFilename] = state.lyricRevisions
+            .filter((item) => item && typeof item.content === "string")
+            .map((item) => ({
+              content: item.content,
+              reason: item.reason || "commit",
+              at: Number(item.at || Date.now()),
+            }));
+          lyricsRevisionCursorByAudio[selectedAudioFilename] = Math.max(0, lyricsRevisionHistoryByAudio[selectedAudioFilename].length - 1);
+          ensureLyricsRevisionSeed(document.getElementById("lyricsEditor").value || "", "loaded");
+        }
+
+        // Preserve the user's currently selected global theme when loading media.
+        // Only restore snapshot theme if no theme has been chosen in this session yet.
+        if (state.uiThemeId && !currentThemeId) {
+          applyThemeById(state.uiThemeId, false);
+        }
+
+        if ((preview.bgType || "") === "image" && selectedProjectName) {
+          const cached = new Image();
+          cached.onload = () => { bgImageObj = cached; updatePreview(); };
+          cached.src = `/files/${encodeURIComponent(selectedProjectName)}/custom_bg.jpg`;
+        }
+
+        applyPreviewAudioTuning();
+        updateManualTimingHud();
+        updatePreview();
+      }
+
+      async function loadProjectSnapshot() {
+        if (!selectedAudioFilename) return;
+        try {
+          const res = await fetch(`/api/load-project-state?audio_filename=${encodeURIComponent(selectedAudioFilename)}`);
+          const data = await res.json();
+          if (res.ok && data.state) {
+            applyProjectState(data.state);
+            if (data.status === "success") setStatus(`Loaded saved project state for ${data.project_name || selectedProjectName}.`);
+          }
+        } catch (err) {
+          setStatus(`Project state load failed: ${err}`, true);
+        }
+      }
+
+      async function saveProjectSnapshot() {
+        if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
+        try {
+          await saveLyricsData();
+          const fd = new FormData();
+          fd.append("audio_filename", selectedAudioFilename);
+          fd.append("state_json", JSON.stringify(collectProjectState()));
+          const res = await fetch("/api/save-project-state", { method: "POST", body: fd });
+          const data = await res.json();
+          setStatus(data.message || (res.ok ? "Project snapshot saved." : "Project snapshot failed."), !res.ok);
+          await loadFileManifest();
+        } catch (err) {
+          setStatus(`Snapshot save failed: ${err}`, true);
+        }
+      }
+
+      async function autoCorrectWordTiming() {
+        if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
+        const fd = new FormData();
+        fd.append("audio_filename", selectedAudioFilename);
+        fd.append("whisper_model", document.getElementById("whisperModel").value || "medium");
+        fd.append("whisper_device", document.getElementById("whisperDevice").value || "auto");
+
+        setStatus("Queuing AI word timing correction...");
+        const res = await fetch("/api/auto-correct-word-timing", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "AI word timing job queued." : "AI word timing failed to queue."), !res.ok);
+        if (res.ok) {
+          await loadJobs();
+        }
+      }
+
+      async function saveLyricsData() {
+        if (!selectedLrcFilename) return;
+        const text = document.getElementById("lyricsEditor").value;
+        const keepTime = Number(audio.currentTime || 0);
+        const wasPaused = audio.paused;
+
+        // Immediate viewer push on commit while preserving playback position.
+        parseLrcData(text);
+        updateLyricsReadyIndicator();
+        updatePreview();
+
+        ensureLyricsRevisionSeed(text, "loaded");
+        const fd = new FormData(); fd.append("filename", selectedLrcFilename); fd.append("content", text);
+        const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+        const data = await res.json();
+
+        if (Number.isFinite(keepTime)) {
+          const dur = Number.isFinite(audio.duration) ? Number(audio.duration) : 0;
+          const capped = dur > 0 ? Math.min(Math.max(0, keepTime), Math.max(0, dur - 0.001)) : Math.max(0, keepTime);
+          audio.currentTime = capped;
+        }
+        if (!wasPaused) {
+          audio.play().catch(() => {});
+        }
+        syncSeekBar();
+        displayTimeTracker();
+
+        manualTimingState.previewFromAppliedLyrics = true;
+        addLyricsRevision(selectedAudioFilename, text, "commit");
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+        setStatus(data.message || (res.ok ? "Saved." : "Save failed."), !res.ok);
+        await loadFileManifest();
+      }
+
+      async function autoGrabLyrics() {
+        if (!selectedAudioFilename) { alert("Select media first."); return; }
+        const provider = (document.getElementById("lyricsProvider")?.value || "lrclib").trim();
+        const fd = new FormData();
+        fd.append("audio_filename", selectedAudioFilename);
+        fd.append("provider", provider);
+        setStatus(`Queuing lyrics grab via ${provider}...`);
+        const res = await fetch("/api/auto-grab-lyrics", { method: "POST", body: fd });
+        const data = await res.json();
+        if (res.ok) {
+          selectedLrcFilename = data.filename || selectedLrcFilename;
+          await loadJobs();
+          await loadFileManifest();
+        }
+        setStatus(data.message || (res.ok ? "Lyrics job queued." : "Fetch failed."), !res.ok);
+      }
+
+      async function autoTranscribe() {
+        if (!selectedAudioFilename) { alert("Select media first."); return; }
+        const fd = new FormData(); fd.append("audio_filename", selectedAudioFilename);
+        appendTranscriptionSettings(fd); setStatus(`Queuing transcription...`);
+        const res = await fetch("/api/auto-transcribe", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "Started." : "Failed."), !res.ok);
+        if (res.ok) await loadJobs();
+      }
+
+      async function startRender(usePreview) {
+        if (!selectedAudioFilename) return;
+        const cfg = (usePreview || previewConfigLocked) && previewConfigSnapshot ? previewConfigSnapshot : capturePreviewConfig();
+        const fd = new FormData();
+        Object.keys(cfg).forEach((k) => fd.append(k, cfg[k]));
+        fd.append("use_preview_audio", usePreview ? "1" : "0");
+        const res = await fetch("/api/burn-video", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "Render Queued" : "Render failed"), !res.ok);
+        if (res.ok) await loadJobs();
+      }
+
+      function applyPreviewAudioTuning() {
+        const speed = Number(document.getElementById("playbackRate").value || 1);
+        const vol = Number(document.getElementById("volume").value || 1);
+        const pitch = Number(document.getElementById("pitch").value || 1);
+        audio.volume = Math.max(0, Math.min(1, vol));
+        // Browser preview approximation: pitch scales playbackRate with speed.
+        // Final render still uses FFmpeg pitch filter independently.
+        audio.playbackRate = Math.max(0.25, Math.min(4.0, speed * pitch));
+        if ("preservesPitch" in audio) audio.preservesPitch = false;
+        if ("mozPreservesPitch" in audio) audio.mozPreservesPitch = false;
+        if ("webkitPreservesPitch" in audio) audio.webkitPreservesPitch = false;
+        updateTuneValueLabels();
+      }
+
+      function onPreviewTuneChanged() {
+        if (previewConfigLocked) previewConfigSnapshot = capturePreviewConfig();
+        applyPreviewAudioTuning(); updatePreview();
+      }
+
+      function parseLrcData(lrcText) {
+        lyricLines = [];
+        const tagRegex = /\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g;
+        const plain = [];
+        lrcText.split("\n").forEach((line) => {
+          const raw = (line || "").trim();
+          if (!raw) return;
+          const tags = [...raw.matchAll(tagRegex)];
+          if (tags.length === 0) { plain.push(raw); return; }
+          const text = raw.replace(tagRegex, "").trim();
+          if (!text) return;
+          tags.forEach((m) => {
+            const time = parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + parseInt((m[3] || "0").padEnd(3, "0").slice(0, 3), 10) / 1000;
+            lyricLines.push({ time, text });
+          });
+        });
+        if (lyricLines.length === 0 && plain.length > 0) {
+          let cursor = 0; plain.forEach((text) => { lyricLines.push({ time: cursor, text }); cursor += 3.5; });
+        }
+        lyricLines.sort((a, b) => a.time - b.time);
+        updateLyricsReadyIndicator();
+      }
+
+      // CLAMPED MATH: Prevents negative values from causing the whole screen to disappear
+      // FIXED MATH: Scales perfectly 0 to 1 based on the Speed Dropdown
+      function applyTransition(p, style) {
+        let alpha = 1, scale = 1, yOff = 0, blur = 0;
+        let pClamped = Math.max(0, Math.min(1, p));
+
+        if (style === "fade") alpha = pClamped;
+        else if (style === "pop") scale = pClamped < 0.5 ? 1.0 + (0.1 * (1 - (pClamped/0.5))) : 1;
+        else if (style === "slide") yOff = (1 - pClamped) * 40;
+        else if (style === "zoom") { scale = 0.8 + (pClamped * 0.2); alpha = pClamped; }
+        else if (style === "drop") { yOff = (1 - pClamped) * -40; alpha = pClamped; }
+        else if (style === "blur") { blur = (1 - pClamped) * 10; alpha = pClamped; }
+
+        return { alpha, scale, yOff, blur };
+      }
+      function applyTextEffect(effect, pColor, sColor) {
+        ctx.shadowBlur = 0; ctx.shadowColor = "transparent"; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+        if (effect === "shadow") { ctx.shadowBlur = 15; ctx.shadowColor = "rgba(0,0,0,0.9)"; }
+        else if (effect === "hard-shadow") { ctx.shadowOffsetX = 8; ctx.shadowOffsetY = 8; ctx.shadowColor = "rgba(0,0,0,0.9)"; }
+        else if (effect === "glow") { ctx.shadowBlur = 25; ctx.shadowColor = "rgba(255,255,255,0.7)"; }
+        else if (effect === "neon") { ctx.shadowBlur = 35; ctx.shadowColor = sColor; }
+      }
+
+      function handleBgUpload(event) {
+        const file = event.target.files[0];
+        if (file) {
+          bgImageObj = new Image();
+          bgImageObj.onload = () => { updatePreview(); };
+          bgImageObj.src = URL.createObjectURL(file);
+          document.getElementById("bgType").value = "image";
+          if (selectedAudioFilename) {
+            const fd = new FormData();
+            fd.append("file", file);
+            fd.append("audio_filename", selectedAudioFilename);
+            fetch("/api/upload-bg", { method: "POST", body: fd }).catch(() => {});
+          }
+        }
+      }
+
+      // NEW STATIC LAYOUT ENGINE: Wraps all lyrics once to perfectly prevent shifting
+      function buildStableLines(currentTime, maxW, wordPad = 0) {
+        let lines = [];
+        const spaceW = ctx.measureText(" ").width + wordPad;
+        const MAX_WORDS_PER_LINE = 8;
+        const PAUSE_THRESHOLD_SEC = 0.8;
+
+        let wordTokens = [];
+
+        if (manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length > 0) {
+            manualTimingState.words.forEach((w, idx) => {
+                const entry = manualTimingState.entries[idx];
+                const startT = (entry && Number.isFinite(entry.start)) ? entry.start : null;
+                const endT = (entry && Number.isFinite(entry.end)) ? entry.end : (startT !== null ? startT + 0.3 : null);
+                wordTokens.push({ text: w, start: startT, end: endT, isManual: true, idx: idx });
+            });
+        } else {
+            if (lyricLines.length === 0) return [];
+            lyricLines.forEach((item, idx) => {
+                const nextTime = lyricLines[idx + 1] ? lyricLines[idx + 1].time : item.time + 3.0;
+                let words = (item.text || "").split(" ").filter(Boolean);
+                if (!words.length) return;
+
+                const durPerWord = (nextTime - item.time) / words.length;
+                words.forEach((w, wIdx) => {
+                    wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0 });
+                });
+            });
+        }
+
+        let currLine = []; let currW = 0;
+
+        wordTokens.forEach((token, i) => {
+            const tw = ctx.measureText(token.text).width;
+            const prevToken = i > 0 ? wordTokens[i - 1] : null;
+            let forceBreak = false;
+
+            if (currLine.length > 0 && (currW + spaceW + tw) > maxW) forceBreak = true;
+            if (currLine.length >= MAX_WORDS_PER_LINE) forceBreak = true;
+            if (prevToken && prevToken.end !== null && token.start !== null && (token.start - prevToken.end) > PAUSE_THRESHOLD_SEC) forceBreak = true;
+            if (token.isLrcStart && currLine.length > 0) {
+                const prevIsLrcStart = prevToken ? prevToken.isLrcStart : true;
+                const nextIsLrcStart = (i + 1 < wordTokens.length) ? wordTokens[i+1].isLrcStart : true;
+                if (!(prevIsLrcStart && nextIsLrcStart)) forceBreak = true;
+            }
+
+            if (forceBreak && currLine.length > 0) { lines.push(currLine); currLine = []; currW = 0; }
+
+            let prog = 0, isActive = false, isPast = false;
+            if (token.isManual) {
+                isActive = (token.idx === manualTimingState.cursor);
+                isPast = (token.idx < manualTimingState.cursor);
+                if (isActive && manualTimingState.activeStart !== null) {
+                const dur = estimateActiveWordDuration();
+                    prog = Math.max(0, Math.min(1, (currentTime - manualTimingState.activeStart) / dur));
+                }
+            } else {
+                isActive = (currentTime >= token.start && currentTime < token.end);
+                isPast = (currentTime >= token.end);
+                if (isActive) {
+                    const dur = Math.max(0.02, token.end - token.start);
+                    prog = Math.max(0, Math.min(1, (currentTime - token.start) / dur));
+                }
+            }
+
+            // FIXED: Added `start` to the payload so animations can calculate absolute entrance times
+            currLine.push({ text: token.text, active: isActive, progress: isActive ? prog : (isPast ? 1 : 0), start: token.start });
+            currW += (currLine.length === 1 ? tw : spaceW + tw);
+        });
+
+        if (currLine.length > 0) lines.push(currLine);
+        return lines;
+      }
+
+      function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX) {
+        const spaceW = ctx.measureText(" ").width + wordPad;
+        const cx = Number.isFinite(centerX) ? centerX : (canvas.width / 2);
+        let x = cx - tokens.reduce((s, t, i) => s + ctx.measureText(t.text).width + (i > 0 ? spaceW : 0), 0) / 2;
+        tokens.forEach((t, i) => {
+          if (i > 0) x += spaceW;
+          const tw = ctx.measureText(t.text).width;
+          ctx.strokeStyle = oColor;
+          ctx.strokeText(t.text, x, y);
+
+          if (t.active) {
+            const split = Math.max(0, Math.min(t.text.length, Math.floor(t.text.length * t.progress)));
+            const left = t.text.slice(0, split), right = t.text.slice(split);
+            const lw = ctx.measureText(left).width;
+            ctx.fillStyle = pColor; ctx.fillText(left, x, y);
+            ctx.fillStyle = sColor; ctx.fillText(right, x + lw, y);
+          } else if (t.progress >= 1) {
+            ctx.fillStyle = pColor; ctx.fillText(t.text, x, y);
+          } else {
+            ctx.fillStyle = sColor; ctx.fillText(t.text, x, y);
+          }
+          x += tw;
+        });
+      }
+
+      function togglePlayback() {
+        if (!audio.src) { alert("Select media first."); return; }
+        if (audio.paused) {
+          if (previewShouldStartAtZero || audio.ended || Number(audio.currentTime || 0) < 0.08) {
+            audio.currentTime = 0;
+            previewShouldStartAtZero = false;
+          }
+          audio.play(); document.getElementById("playBtn").textContent = "Pause"; renderLoop();
+        } else {
+          audio.pause(); document.getElementById("playBtn").textContent = "Play";
+        }
+      }
+
+      function onAudioLoaded() {
+        if (previewShouldStartAtZero) {
+          audio.currentTime = 0;
+          previewShouldStartAtZero = false;
+        }
+        applyPreviewAudioTuning();
+        syncSeekBar();
+        displayTimeTracker();
+        updatePreview();
+      }
+      function onAudioTimeUpdate() { syncSeekBar(); displayTimeTracker(); }
+      function onSeekBarInput() { isSeekingPreview = true; seekPreviewToSlider(); }
+      function onSeekBarCommit() { seekPreviewToSlider(); isSeekingPreview = false; }
+      function seekPreviewToSlider() {
+        const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
+        if (dur > 0) audio.currentTime = dur * (Number(document.getElementById("seekBar").value || 0) / 1000);
+        displayTimeTracker(); updatePreview();
+      }
+      function syncSeekBar() {
+        if (isSeekingPreview) return;
+        const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
+        document.getElementById("seekBar").value = dur > 0 ? Math.round((audio.currentTime / dur) * 1000) : 0;
+      }
+      function onPlaybackRateChange() { applyPreviewAudioTuning(); }
+      function displayTimeTracker() {
+        const fm = (s) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
+        document.getElementById("timeDisplay").textContent = `${fm(audio.currentTime || 0)} / ${fm(Number.isFinite(audio.duration) ? audio.duration : 0)}`;
+      }
+
+      function updatePreview() { drawFrame(audio.currentTime || 0); }
+      function renderLoop() { if (!audio.paused) { drawFrame(audio.currentTime || 0); requestAnimationFrame(renderLoop); } }
+
+      let smoothScrollY = 0; // State variable for Continuous Scroll Mode
+
+      function drawFrame(time) {
+        const w = canvas.width || previewWidth || 1280;
+        const h = canvas.height || previewHeight || 720;
+        const cx = Math.round(w / 2);
+        const cy = Math.round(h / 2);
+        const layoutScale = Math.max(0.45, Math.min(1.15, Math.min(w / 1920, h / 1080)));
+        ctx.clearRect(0, 0, w, h);
+        const bgType = document.getElementById("bgType").value;
+        const bgCol = document.getElementById("bgColor").value;
+        const primCol = document.getElementById("primaryColor").value;
+
+        const hasPreviewMedia = !!(selectedAudioFilename && audio.src);
+        if (!hasPreviewMedia) {
+          const placeholder = ensureKaraokePlaceholderImage();
+          if (placeholder && placeholder.complete) {
+            ctx.drawImage(placeholder, 0, 0, w, h);
+          } else {
+            let fallback = ctx.createLinearGradient(0, 0, w, h);
+            fallback.addColorStop(0, "#1f005c");
+            fallback.addColorStop(0.55, "#ff6b6b");
+            fallback.addColorStop(1, "#ffd166");
+            ctx.fillStyle = fallback;
+            ctx.fillRect(0, 0, w, h);
+          }
+        } else if (bgType === "image" && bgImageObj) {
+          ctx.drawImage(bgImageObj, 0, 0, w, h);
+        } else if (bgType === "gradient") {
+          let grd = ctx.createLinearGradient(0, 0, w, h);
+          grd.addColorStop(0, bgCol); grd.addColorStop(1, document.getElementById("outlineColor").value);
+          ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
+        } else if (bgType === "spiral") {
+          let grd = ctx.createRadialGradient(cx, cy, Math.max(30, h * 0.05), cx, cy, Math.max(w, h) * 0.75);
+          grd.addColorStop(0, bgCol); grd.addColorStop(0.5, primCol); grd.addColorStop(1, bgCol);
+          ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
+        } else { ctx.fillStyle = bgCol; ctx.fillRect(0, 0, w, h); }
+
+        const fName = document.getElementById("fontSelect").value || "Arial";
+        const fSize = parseInt(document.getElementById("fontSize").value, 10) || 130;
+        const outline = document.getElementById("outlineColor").value;
+        const primary = document.getElementById("primaryColor").value;
+        const secondary = document.getElementById("secondaryColor").value;
+        const tStyle = document.getElementById("transitionStyle").value;
+        const effect = document.getElementById("textEffect").value;
+        const baseLineGap = parseInt(document.getElementById("lineSpacing").value, 10) || 30;
+        const baseWordPad = parseInt(document.getElementById("wordPadding").value, 10) || 0;
+        const scaledFontSize = Math.max(26, Math.round(fSize * layoutScale));
+        const lineGap = Math.max(8, Math.round(baseLineGap * layoutScale));
+        const wordPad = Math.max(0, Math.round(baseWordPad * layoutScale));
+
+        // New FX modifiers
+        const fxScope = document.getElementById("fxScope") ? document.getElementById("fxScope").value : "page";
+        const fxSpeed = parseFloat(document.getElementById("fxSpeed") ? document.getElementById("fxSpeed").value : "0.6");
+
+        ctx.font = `bold ${scaledFontSize}px ${fName}`;
+        const horizontalPadding = Math.max(90, Math.round(w * 0.08));
+        const maxW = Math.max(280, w - horizontalPadding * 2);
+        const lHeight = Math.round(scaledFontSize * 1.1);
+
+        const allLines = buildStableLines(time, maxW, wordPad);
+        const reqVisible = parseInt(document.getElementById("previewLineCount").value, 10);
+        const revealMode = document.getElementById("revealMode").value || "block";
+
+        let activeIdx = 0;
+        for (let i = 0; i < allLines.length; i++) { if (allLines[i].some((t) => t.active)) { activeIdx = i; break; } }
+
+        if (allLines.length === 0) {
+          ctx.save();
+          ctx.textAlign = "center";
+          ctx.font = `700 ${Math.max(24, Math.round(scaledFontSize * 0.45))}px ${fName}`;
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.strokeStyle = "rgba(0,0,0,0.55)";
+          ctx.lineWidth = Math.max(2, Math.round(scaledFontSize * 0.03));
+          const msg = hasPreviewMedia ? "Lyrics will appear here" : "Load media to start karaoke";
+          ctx.strokeText(msg, cx, Math.round(h * 0.82));
+          ctx.fillText(msg, cx, Math.round(h * 0.82));
+          ctx.restore();
+          return;
+        }
+
+        let linesToDraw = [];
+        let bTop = cy;
+        let startIdx = 0;
+
+        // Display Mode Math
+        if (revealMode === "continuous") {
+          let targetScrollY = activeIdx * (lHeight + lineGap);
+          smoothScrollY += (targetScrollY - smoothScrollY) * 0.08; // Interpolated Smooth Lerp
+
+          startIdx = Math.max(0, activeIdx - 5);
+          const endIdx = Math.min(allLines.length, activeIdx + 5);
+          linesToDraw = allLines.slice(startIdx, endIdx);
+
+          bTop = cy - smoothScrollY + (startIdx * (lHeight + lineGap)) - Math.round(lHeight/2);
+        } else if (revealMode === "block") {
+          const pageIdx = Math.floor(activeIdx / reqVisible) * reqVisible;
+          linesToDraw = allLines.slice(pageIdx, pageIdx + reqVisible);
+          const bH = linesToDraw.length ? linesToDraw.length * lHeight + (linesToDraw.length - 1) * lineGap : lHeight;
+          bTop = cy - Math.round(bH / 2);
+        } else if (revealMode === "eager") {
+          linesToDraw = allLines.slice(activeIdx, activeIdx + reqVisible);
+          const bH = linesToDraw.length ? linesToDraw.length * lHeight + (linesToDraw.length - 1) * lineGap : lHeight;
+          bTop = cy - Math.round(bH / 2);
+        }
+
+        ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.lineJoin = "round"; ctx.lineWidth = Math.max(2, Math.round(scaledFontSize * 0.16));
+
+        if (linesToDraw.length) {
+          applyTextEffect(effect, primary, secondary);
+
+          // FX SCOPE: Page Entrance Animation
+          if (fxScope === "page" && revealMode !== "continuous") {
+            let pageStart = time;
+            if (linesToDraw[0] && linesToDraw[0][0] && linesToDraw[0][0].start !== undefined) pageStart = linesToDraw[0][0].start;
+
+            let prog = Math.max(0, Math.min(1, (time - pageStart) / fxSpeed));
+            const tr = applyTransition(prog, tStyle);
+
+            ctx.save();
+            ctx.globalAlpha = tr.alpha;
+            if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
+            ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.translate(-cx, -cy);
+
+            linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx));
+            ctx.restore();
+
+          } else {
+            // FX SCOPE: Line Entrance Animation (or fallback for continuous)
+            linesToDraw.forEach((t, i) => {
+              let lineStart = time;
+              if (t[0] && t[0].start !== undefined) lineStart = t[0].start;
+
+              let prog = Math.max(0, Math.min(1, (time - lineStart) / fxSpeed));
+              const tr = applyTransition(prog, tStyle);
+
+              ctx.save();
+              ctx.globalAlpha = tr.alpha;
+              if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
+
+              let lineY = revealMode === "continuous" ? (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap)) : (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap));
+
+              ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.translate(-cx, -lineY);
+              drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx);
+              ctx.restore();
+            });
+          }
+        } else {
+          ctx.shadowBlur = 0; ctx.fillStyle = secondary; ctx.font = `bold ${Math.max(18, Math.round(scaledFontSize * 0.5))}px ${fName}`;
+          ctx.fillText("No timed lyrics loaded yet", cx - ctx.measureText("No timed lyrics loaded yet").width / 2, cy);
+        }
+      }
+      onPreviewResolutionChange();
+      applyControlContrastVars();
+      onFontSizeChanged(); loadFonts(); loadThemes(); loadFileManifest(); loadJobs();
+      jobPollTimer = window.setInterval(loadJobs, 2000);
+      updatePreview(); updateManualTimingHud();
+    </script>
+</body>
+</html>
+
