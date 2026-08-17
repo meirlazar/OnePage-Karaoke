@@ -1,0 +1,42 @@
+services:
+
+  onepage-karaoke:
+    build: .
+    container_name: onepage-karaoke
+    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "8002:8000"
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - METUBE_URL=http://local-metube:8081
+      - FONT_SOURCE_DIRS=/workspace/fonts:/usr/local/share/fonts/extrafonts
+      - AI_DEVICE=cuda
+      - WHISPER_COMPUTE_TYPE_CUDA=int8
+      - PUID=1000
+      - PGID=1000
+
+    volumes:
+      - ./workspace:/workspace
+      - ./extrafonts:/workspace/fonts:ro
+    working_dir: /workspace
+    command: ["/bin/sh", "-lc", "fc-cache -fv && python3 web_server.py"]
+
+  local-metube:
+    image: ghcr.io/alexta69/metube:latest
+    container_name: local-metube
+    ports:
+      - "8001:8081"
+    volumes:
+      - ./workspace/output:/downloads
+
+
