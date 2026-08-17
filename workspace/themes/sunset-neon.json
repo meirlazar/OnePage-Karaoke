@@ -1,0 +1,21 @@
+{
+  "id": "sunset-neon",
+  "name": "Sunset Neon",
+  "description": "Bold magenta and orange sunset glow with high-energy accents.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/sunset-neon",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#1a0f2e",
+    "bg-surface": "#2b1d45",
+    "bg-panel": "#22163a",
+    "border": "#ff7a5955",
+    "text-main": "#ffe8f2",
+    "text-muted": "#cda8c9",
+    "accent": "#ff7a59",
+    "accent-hover": "#ffd166",
+    "success": "#7df9c1",
+    "warning": "#ffd166",
+    "danger": "#ff6b9d"
+  }
+}

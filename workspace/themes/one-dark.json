@@ -1,0 +1,21 @@
+{
+  "id": "one-dark",
+  "name": "One Dark",
+  "description": "Balanced editor-style charcoal palette with blue and coral accents.",
+  "source_name": "One Dark",
+  "source_url": "https://github.com/atom/one-dark-syntax",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#1e2127",
+    "bg-surface": "#282c34",
+    "bg-panel": "#21252b",
+    "border": "#61afef44",
+    "text-main": "#abb2bf",
+    "text-muted": "#7f848e",
+    "accent": "#61afef",
+    "accent-hover": "#98c379",
+    "success": "#98c379",
+    "warning": "#e5c07b",
+    "danger": "#e06c75"
+  }
+}

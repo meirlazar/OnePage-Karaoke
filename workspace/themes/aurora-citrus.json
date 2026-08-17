@@ -1,0 +1,21 @@
+{
+  "id": "aurora-citrus",
+  "name": "Aurora Citrus",
+  "description": "Lime and sky-blue glow over deep night teal for vibrant controls.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/aurora-citrus",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#062028",
+    "bg-surface": "#0d333f",
+    "bg-panel": "#0a2b35",
+    "border": "#9cff5755",
+    "text-main": "#ecfff2",
+    "text-muted": "#b1d7c5",
+    "accent": "#9cff57",
+    "accent-hover": "#6fd3ff",
+    "success": "#90ffb3",
+    "warning": "#ffe17a",
+    "danger": "#ff7f9f"
+  }
+}

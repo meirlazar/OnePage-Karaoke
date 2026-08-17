@@ -1,0 +1,21 @@
+{
+  "id": "gruvbox-dark",
+  "name": "Gruvbox Dark",
+  "description": "Warm retro contrast with amber and moss accents.",
+  "source_name": "Gruvbox",
+  "source_url": "https://github.com/morhetz/gruvbox",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#1d2021",
+    "bg-surface": "#282828",
+    "bg-panel": "#32302f",
+    "border": "#fabd2f44",
+    "text-main": "#ebdbb2",
+    "text-muted": "#a89984",
+    "accent": "#fabd2f",
+    "accent-hover": "#b8bb26",
+    "success": "#b8bb26",
+    "warning": "#fe8019",
+    "danger": "#fb4934"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "dracula",
+  "name": "Dracula",
+  "description": "High-contrast dark palette with hot pink and cyan highlights.",
+  "source_name": "Dracula Theme",
+  "source_url": "https://github.com/dracula/dracula-theme",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#191a21",
+    "bg-surface": "#282a36",
+    "bg-panel": "#222430",
+    "border": "#8be9fd44",
+    "text-main": "#f8f8f2",
+    "text-muted": "#bd93f9",
+    "accent": "#8be9fd",
+    "accent-hover": "#50fa7b",
+    "success": "#50fa7b",
+    "warning": "#f1fa8c",
+    "danger": "#ff5555"
+  }
+}

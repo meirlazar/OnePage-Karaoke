@@ -1,0 +1,21 @@
+{
+  "id": "rose-pine",
+  "name": "Rosé Pine",
+  "description": "Soft dusk palette with rose and foam accents.",
+  "source_name": "Rosé Pine",
+  "source_url": "https://github.com/rose-pine/rose-pine-theme",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#191724",
+    "bg-surface": "#1f1d2e",
+    "bg-panel": "#26233a",
+    "border": "#9ccfd844",
+    "text-main": "#e0def4",
+    "text-muted": "#908caa",
+    "accent": "#9ccfd8",
+    "accent-hover": "#c4a7e7",
+    "success": "#31748f",
+    "warning": "#f6c177",
+    "danger": "#eb6f92"
+  }
+}

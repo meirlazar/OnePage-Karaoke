@@ -1,0 +1,21 @@
+{
+  "id": "minty-midnight",
+  "name": "Minty Midnight",
+  "description": "Cool mint highlights with rich midnight blues and clean text contrast.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/minty-midnight",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#081722",
+    "bg-surface": "#122636",
+    "bg-panel": "#0d1f2d",
+    "border": "#6ef7d855",
+    "text-main": "#e9fdff",
+    "text-muted": "#a8cdd3",
+    "accent": "#6ef7d8",
+    "accent-hover": "#7fc8ff",
+    "success": "#8cffb4",
+    "warning": "#ffe17a",
+    "danger": "#ff8692"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "disco-lagoon",
+  "name": "Disco Lagoon",
+  "description": "Nightclub cyan and hot pink blend designed for standout panel headings.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/disco-lagoon",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#0d1430",
+    "bg-surface": "#161f44",
+    "bg-panel": "#111939",
+    "border": "#41d9ff55",
+    "text-main": "#edf2ff",
+    "text-muted": "#b2bcdd",
+    "accent": "#41d9ff",
+    "accent-hover": "#ff4fa3",
+    "success": "#75fbb3",
+    "warning": "#ffd166",
+    "danger": "#ff7d9b"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "ocean-pop",
+  "name": "Ocean Pop",
+  "description": "Tropical aqua palette with coral highlights for bright stage contrast.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/ocean-pop",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#04243a",
+    "bg-surface": "#0c3554",
+    "bg-panel": "#082d47",
+    "border": "#44e5ff55",
+    "text-main": "#e6fbff",
+    "text-muted": "#a8d6e8",
+    "accent": "#44e5ff",
+    "accent-hover": "#ff8a66",
+    "success": "#71f7b8",
+    "warning": "#ffd56a",
+    "danger": "#ff7d87"
+  }
+}

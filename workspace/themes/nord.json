@@ -1,0 +1,21 @@
+{
+  "id": "nord",
+  "name": "Nord",
+  "description": "Arctic blue palette with cool slate contrast.",
+  "source_name": "Nord",
+  "source_url": "https://github.com/nordtheme/nord",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#2e3440",
+    "bg-surface": "#3b4252",
+    "bg-panel": "#434c5e",
+    "border": "#88c0d044",
+    "text-main": "#eceff4",
+    "text-muted": "#d8dee9",
+    "accent": "#88c0d0",
+    "accent-hover": "#81a1c1",
+    "success": "#a3be8c",
+    "warning": "#ebcb8b",
+    "danger": "#bf616a"
+  }
+}

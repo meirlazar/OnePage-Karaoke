@@ -1,0 +1,21 @@
+{
+  "id": "emerald-city",
+  "name": "Emerald City",
+  "description": "Jewel-toned greens with electric gold accents and clean readability.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/emerald-city",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#071f19",
+    "bg-surface": "#0f3028",
+    "bg-panel": "#0b281f",
+    "border": "#4ce0b355",
+    "text-main": "#e8fff6",
+    "text-muted": "#a9d7c7",
+    "accent": "#4ce0b3",
+    "accent-hover": "#ffd166",
+    "success": "#79ff9b",
+    "warning": "#ffd166",
+    "danger": "#ff7a90"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "cherry-soda",
+  "name": "Cherry Soda",
+  "description": "Playful cherry reds and cool mint highlights with punchy contrast.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/cherry-soda",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#230a17",
+    "bg-surface": "#3a1126",
+    "bg-panel": "#2f0d1f",
+    "border": "#ff5d8f55",
+    "text-main": "#ffe8f2",
+    "text-muted": "#cf9eb3",
+    "accent": "#ff5d8f",
+    "accent-hover": "#80ffdb",
+    "success": "#8bffb6",
+    "warning": "#ffd166",
+    "danger": "#ff7a70"
+  }
+}

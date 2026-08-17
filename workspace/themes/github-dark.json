@@ -1,0 +1,21 @@
+{
+  "id": "github-dark",
+  "name": "GitHub Dark",
+  "description": "Clean slate palette with restrained blue accents.",
+  "source_name": "GitHub Dark",
+  "source_url": "https://github.com/primer/github-vscode-theme",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#0d1117",
+    "bg-surface": "#161b22",
+    "bg-panel": "#11161d",
+    "border": "#58a6ff44",
+    "text-main": "#c9d1d9",
+    "text-muted": "#8b949e",
+    "accent": "#58a6ff",
+    "accent-hover": "#79c0ff",
+    "success": "#3fb950",
+    "warning": "#d29922",
+    "danger": "#f85149"
+  }
+}

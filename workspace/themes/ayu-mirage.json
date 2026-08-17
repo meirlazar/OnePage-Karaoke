@@ -1,0 +1,21 @@
+{
+  "id": "ayu-mirage",
+  "name": "Ayu Mirage",
+  "description": "Low-glare navy palette with warm citrus accents.",
+  "source_name": "Ayu",
+  "source_url": "https://github.com/ayu-theme/ayu-colors",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#1f2430",
+    "bg-surface": "#242936",
+    "bg-panel": "#2a3040",
+    "border": "#73d0ff44",
+    "text-main": "#cccac2",
+    "text-muted": "#707a8c",
+    "accent": "#73d0ff",
+    "accent-hover": "#ffd173",
+    "success": "#d5ff80",
+    "warning": "#ffad66",
+    "danger": "#f28779"
+  }
+}

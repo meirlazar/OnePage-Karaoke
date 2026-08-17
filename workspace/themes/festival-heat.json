@@ -1,0 +1,21 @@
+{
+  "id": "festival-heat",
+  "name": "Festival Heat",
+  "description": "High-saturation red, orange, and lime for a bright concert vibe.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/festival-heat",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#26110b",
+    "bg-surface": "#3d1a11",
+    "bg-panel": "#33160f",
+    "border": "#ff6f3d66",
+    "text-main": "#fff0e6",
+    "text-muted": "#d8b2a3",
+    "accent": "#ff6f3d",
+    "accent-hover": "#c7ff4a",
+    "success": "#96ff8a",
+    "warning": "#ffd166",
+    "danger": "#ff6f8d"
+  }
+}

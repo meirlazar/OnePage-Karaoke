@@ -1,0 +1,21 @@
+{
+  "id": "candy-flame",
+  "name": "Candy Flame",
+  "description": "Bubblegum pink meets flame orange for colorful karaoke sessions.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/candy-flame",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#2b1023",
+    "bg-surface": "#431736",
+    "bg-panel": "#36132c",
+    "border": "#ff8b3d55",
+    "text-main": "#fff0f7",
+    "text-muted": "#d7a7be",
+    "accent": "#ff8b3d",
+    "accent-hover": "#ff5ebc",
+    "success": "#8bffb8",
+    "warning": "#ffd166",
+    "danger": "#ff6f7e"
+  }
+}

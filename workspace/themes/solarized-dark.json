@@ -1,0 +1,21 @@
+{
+  "id": "solarized-dark",
+  "name": "Solarized Dark",
+  "description": "Classic precision-tuned dark palette with cyan and amber contrast.",
+  "source_name": "Solarized",
+  "source_url": "https://github.com/altercation/solarized",
+  "license": "MIT",
+  "vars": {
+    "bg-base": "#002b36",
+    "bg-surface": "#073642",
+    "bg-panel": "#0b3b48",
+    "border": "#2aa19844",
+    "text-main": "#93a1a1",
+    "text-muted": "#839496",
+    "accent": "#2aa198",
+    "accent-hover": "#b58900",
+    "success": "#859900",
+    "warning": "#b58900",
+    "danger": "#dc322f"
+  }
+}

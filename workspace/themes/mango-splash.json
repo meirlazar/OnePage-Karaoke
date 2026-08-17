@@ -1,0 +1,21 @@
+{
+  "id": "mango-splash",
+  "name": "Mango Splash",
+  "description": "Warm mango and teal contrast inspired by summer festival posters.",
+  "source_name": "Custom",
+  "source_url": "https://example.com/mango-splash",
+  "license": "CC0-1.0",
+  "vars": {
+    "bg-base": "#26130a",
+    "bg-surface": "#3a1f0f",
+    "bg-panel": "#311a0d",
+    "border": "#ffb34766",
+    "text-main": "#fff1da",
+    "text-muted": "#d9bb92",
+    "accent": "#ffb347",
+    "accent-hover": "#5eead4",
+    "success": "#7af7a8",
+    "warning": "#ffd166",
+    "danger": "#ff7b54"
+  }
+}
