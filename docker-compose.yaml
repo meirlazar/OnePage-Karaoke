@@ -27,7 +27,7 @@ services:
 
     volumes:
       - ./workspace:/workspace
-      - ./extrafonts:/workspace/fonts:ro
+      - ./fonts:/workspace/fonts:ro
     working_dir: /workspace
     command: ["/bin/sh", "-lc", "fc-cache -fv && python3 web_server.py"]
 
