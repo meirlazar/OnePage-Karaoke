@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="AI Audio Video Production Suite")
-WORKSPACE = Path("/workspace")
+WORKSPACE = Path(os.environ.get("WORKSPACE_DIR", Path(__file__).resolve().parent)).resolve()
 OUTPUT_DIR = WORKSPACE / "output"
 FONTS_DIR = WORKSPACE / "fonts"
 SERVED_FONTS_DIR = WORKSPACE / ".served-fonts"
@@ -147,11 +147,16 @@ def _job_view(job: dict) -> dict:
         "whisper_device": job.get("whisper_device", ""),
         "render_device": job.get("render_device", ""),
         "whisper_model": job.get("whisper_model", ""),
+        "timing_mode": job.get("timing_mode", ""),
         "transcription_language": job.get("transcription_language", ""),
         "pitch": job.get("pitch", 1),
         "volume": job.get("volume", 1),
         "details": job.get("details", ""),
         "output_filename": job.get("output_filename", ""),
+        "render_width": job.get("render_width", 0),
+        "render_height": job.get("render_height", 0),
+        "render_resolution": job.get("render_resolution", ""),
+        "render_source": job.get("render_source", ""),
         "error_file": job.get("error_file", ""),
         "error_line": job.get("error_line", 0),
         "error_column": job.get("error_column", 0),
@@ -976,22 +981,29 @@ def _run_audio_pipeline_job(
     try:
         project_dir = audio_path.parent
         stems_out = project_dir / "stems"
+        stem_ai_device = _effective_ai_device(stem_device)
         whisper_ai_device = _effective_ai_device(whisper_device)
+        _update_job(job_id, stem_device=stem_ai_device, whisper_device=whisper_ai_device)
         demucs_end = start_progress + int((end_progress - start_progress) * 0.45)
         stem_ai_device = _run_demucs_with_progress(
             job_id,
             audio_path,
             stems_out,
-            stem_device,
+            stem_ai_device,
             start_progress,
             demucs_end,
         )
+        _update_job(job_id, stem_device=stem_ai_device)
         _update_job(job_id, details=f"Stem device: {stem_ai_device}; Whisper device: {whisper_ai_device}; Model: {whisper_model}; Language: {transcription_language}")
 
-        no_vocals_track = stems_out / "htdemucs" / audio_path.stem / "no_vocals.wav"
+        stem_dir = _find_project_stems(project_dir, audio_path.stem)
+        no_vocals_track = stem_dir / "no_vocals.wav" if stem_dir else None
+        vocals_wav_track = stem_dir / "vocals.wav" if stem_dir else None
         minus_track = project_dir / f"{audio_path.stem}_minus.mp3"
-        if no_vocals_track.exists():
-            _update_job(job_id, stage="package accompaniment", message=f"Packaging accompaniment for {audio_path.name}", progress=demucs_end)
+        vocals_track_mp3 = project_dir / f"{audio_path.stem}_vocals.mp3"
+        chorus_track = project_dir / f"{audio_path.stem}_minus_chorus.mp3"
+        if no_vocals_track and no_vocals_track.exists():
+            _update_job(job_id, stage="package stems", message=f"Packaging vocal/instrumental stems for {audio_path.name}", progress=demucs_end)
             logger.info("[PIPELINE] job=%s packaging accompaniment=%s", job_id, no_vocals_track)
             ffmpeg_res = subprocess.run(
                 [FFMPEG_BIN, "-y", "-i", str(no_vocals_track), "-q:a", "2", str(minus_track)],
@@ -1001,16 +1013,27 @@ def _run_audio_pipeline_job(
             if ffmpeg_res.returncode != 0:
                 logger.warning("[PIPELINE] job=%s accompaniment packaging failed: %s", job_id, (ffmpeg_res.stderr or "")[-300:])
                 _update_job(job_id, message=f"Separation complete, accompaniment packaging failed for {audio_path.name}")
+        if vocals_wav_track and vocals_wav_track.exists():
+            vocals_res = subprocess.run(
+                [FFMPEG_BIN, "-y", "-i", str(vocals_wav_track), "-q:a", "2", str(vocals_track_mp3)],
+                capture_output=True,
+                text=True,
+            )
+            if vocals_res.returncode != 0:
+                logger.warning("[PIPELINE] job=%s vocals-only packaging failed: %s", job_id, (vocals_res.stderr or "")[-300:])
 
-        vocals_track = stems_out / "htdemucs" / audio_path.stem / "vocals.wav"
+        vocals_track = stem_dir / "vocals.wav" if stem_dir else project_dir / "vocals.wav"
         lyrics_end = start_progress + int((end_progress - start_progress) * 0.65)
-        lrc_file = project_dir / f"{audio_path.stem}.lrc"
+        lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
 
         _update_job(job_id, stage="lyrics fetch", message=f"Fetching synced lyrics for {audio_path.name}", progress=demucs_end)
         _ensure_not_cancelled(job_id)
         res = subprocess.run(["syncedlyrics", lyrics_search, "-o", str(lrc_file)], capture_output=True, text=True)
         if res.returncode == 0 and lrc_file.exists() and lrc_file.stat().st_size >= 10:
             logger.info("[PIPELINE] job=%s syncedlyrics hit for %s", job_id, audio_path.name)
+            if no_vocals_track and no_vocals_track.exists():
+                _update_job(job_id, stage="package chorus stem", message=f"Building chorus-aware stem for {audio_path.name}", progress=max(0, end_progress - 2))
+                _build_chorus_aware_track(job_id, audio_path, no_vocals_track, lrc_file, chorus_track)
             _update_job(job_id, progress=end_progress, message=f"Timed lyrics ready for {audio_path.name}")
             return
 
@@ -1034,6 +1057,9 @@ def _run_audio_pipeline_job(
             raise RuntimeError(f"Faster-Whisper produced no timed transcription for {audio_path.name}")
         (project_dir / "vocals.json").write_text(json.dumps(transcript_payload, ensure_ascii=False), encoding="utf-8")
         lrc_file.write_text(lrc_content, encoding="utf-8")
+        if no_vocals_track and no_vocals_track.exists():
+            _update_job(job_id, stage="package chorus stem", message=f"Building chorus-aware stem for {audio_path.name}", progress=max(0, end_progress - 2))
+            _build_chorus_aware_track(job_id, audio_path, no_vocals_track, lrc_file, chorus_track)
         _update_job(
             job_id,
             details=(
@@ -1200,8 +1226,12 @@ def _run_render_job(
     volume: float = 1.0,
     render_device: str = DEFAULT_RENDER_DEVICE,
     use_preview_audio: bool = False,
+    render_source: str = "",
     output_filename: str = "",
     render_token: str = "",
+    render_width: int = 1280,
+    render_height: int = 720,
+    render_resolution: str = "",
     project_name: str = "",
 ) -> None:
     preferred_device = _normalize_device(render_device, DEFAULT_RENDER_DEVICE)
@@ -1250,8 +1280,11 @@ def _run_render_job(
                 render_device=attempt_device,
                 job_id=job_id,
                 use_preview_audio=use_preview_audio,
+                render_source=render_source,
                 output_filename=output_filename,
                 render_token=render_token,
+                render_width=render_width,
+                render_height=render_height,
             )
             _update_job(job_id, render_device=attempt_device)
             logger.info("[RENDER END] job=%s audio=%s device=%s", job_id, audio_filename, attempt_device)
@@ -1282,7 +1315,7 @@ def _run_lyrics_fetch_job(
     _update_job(job_id, audio_filename=rel_audio, project_name=audio_path.parent.name)
 
     project_dir = audio_path.parent
-    lrc_file = project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
     if _has_timed_lyrics(lrc_file):
         _update_job(job_id, progress=100, message=f"Lyrics already exist for {audio_path.name}")
         return
@@ -1321,6 +1354,7 @@ def _run_word_timing_correction_job(
     *,
     whisper_model: str = DEFAULT_WHISPER_MODEL,
     whisper_device: str = DEFAULT_WHISPER_DEVICE,
+    timing_mode: str = "major",
     project_name: str = "",
 ) -> None:
     audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
@@ -1328,12 +1362,13 @@ def _run_word_timing_correction_job(
     _update_job(job_id, audio_filename=rel_audio, project_name=audio_path.parent.name)
 
     project_dir = audio_path.parent
-    lrc_file = project_dir / f"{audio_path.stem}.lrc"
-    vocals_track = project_dir / "stems" / "htdemucs" / audio_path.stem / "vocals.wav"
+    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem)
+    stem_dir = _find_project_stems(project_dir, audio_path.stem)
+    vocals_track = stem_dir / "vocals.wav" if stem_dir else None
 
-    if not lrc_file.exists():
-        raise RuntimeError(f"Missing lyrics file for correction: {lrc_file.name}")
-    if not vocals_track.exists():
+    if not lrc_file:
+        raise RuntimeError("Missing lyrics file for correction")
+    if not vocals_track or not vocals_track.exists():
         raise RuntimeError("Missing vocals stem. Run stem separation first.")
 
     json_path = project_dir / "vocals.json"
@@ -1354,10 +1389,15 @@ def _run_word_timing_correction_job(
     json_path.write_text(json.dumps(aligned_payload, ensure_ascii=False), encoding="utf-8")
 
     _update_job(job_id, stage="apply word timing", message=f"Applying AI word timing to {lrc_file.name}", progress=80)
-    corrected_lrc = _rebuild_word_timed_lrc_from_alignment(lrc_file.read_text(encoding="utf-8", errors="ignore"), aligned_payload)
+    source_lrc = lrc_file.read_text(encoding="utf-8", errors="ignore")
+    if timing_mode == "minor":
+        corrected_lrc = _minor_adjust_lrc_timing(source_lrc, aligned_payload)
+    else:
+        corrected_lrc = _rebuild_word_timed_lrc_from_alignment(source_lrc, aligned_payload)
     lrc_file.write_text(corrected_lrc, encoding="utf-8")
 
-    _update_job(job_id, progress=100, message=f"AI word timing correction complete for {audio_path.name}")
+    mode_label = "Minor" if timing_mode == "minor" else "Major"
+    _update_job(job_id, progress=100, message=f"{mode_label} AI timing correction complete for {audio_path.name}")
 
 
 def _sync_project_jobs() -> None:
@@ -1476,15 +1516,6 @@ def _resolve_output_path(path_like: str, *, require_exists: bool = True) -> Path
     return candidate
 
 
-def _resolve_project_dir(project_name: str) -> Path:
-    project = _safe_project_name(project_name, fallback="project")
-    project_dir = (OUTPUT_DIR / project).resolve()
-    output_root = OUTPUT_DIR.resolve()
-    if output_root not in project_dir.parents:
-        raise FileNotFoundError("Invalid project name")
-    return project_dir
-
-
 def _project_sidecar_paths(project_dir: Path, stem: str) -> list[Path]:
     return [
         project_dir / f"{stem}.lrc",
@@ -1494,7 +1525,62 @@ def _project_sidecar_paths(project_dir: Path, stem: str) -> list[Path]:
         project_dir / f"{stem}.txt",
         project_dir / f"{stem}_karaoke.mp4",
         project_dir / f"{stem}_minus.mp3",
+        project_dir / f"{stem}_vocals.mp3",
+        project_dir / f"{stem}_minus_chorus.mp3",
     ]
+
+
+def _find_project_asset(project_dir: Path, extension: str, preferred_stem: str = "") -> Path | None:
+    suffix = extension.lower()
+    candidates = sorted(
+        [path for path in project_dir.iterdir() if path.is_file() and path.suffix.lower() == suffix],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    ) if project_dir.exists() else []
+    if preferred_stem:
+        preferred = project_dir / f"{preferred_stem}{suffix}"
+        if preferred.exists() and preferred.is_file():
+            return preferred
+    return candidates[0] if candidates else None
+
+
+def _find_project_state(project_dir: Path) -> Path | None:
+    preferred = project_dir / f"{project_dir.name}.proj.json"
+    if preferred.exists() and preferred.is_file():
+        return preferred
+    project_files = sorted(project_dir.glob("*.proj.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if project_files:
+        return project_files[0]
+    return _find_project_asset(project_dir, ".json")
+
+
+def _find_project_stems(project_dir: Path, audio_stem: str = "") -> Path | None:
+    roots = []
+    preferred = project_dir / "stems" / "htdemucs" / audio_stem
+    if audio_stem and preferred.is_dir():
+        roots.append(preferred)
+    stems_root = project_dir / "stems"
+    if stems_root.is_dir():
+        roots.extend(path for path in stems_root.rglob("*") if path.is_dir() and path not in roots)
+    for root in roots:
+        if any((root / name).is_file() for name in ("vocals.wav", "no_vocals.wav")):
+            return root
+    return None
+
+
+def _rename_project_assets(project_dir: Path, project_name: str) -> None:
+    for path in sorted(project_dir.iterdir() if project_dir.exists() else [], key=lambda item: item.name.lower()):
+        if not path.is_file() or path.suffix.lower() not in {".lrc", ".ass"} and not path.name.lower().endswith(".proj.json"):
+            continue
+        suffix = ".proj.json" if path.name.lower().endswith(".proj.json") else path.suffix.lower()
+        target = project_dir / f"{project_name}{suffix}"
+        if path == target:
+            continue
+        counter = 2
+        while target.exists():
+            target = project_dir / f"{project_name}_{counter}{suffix}"
+            counter += 1
+        path.rename(target)
 
 
 def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
@@ -1525,10 +1611,9 @@ def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
             candidate.rename(project_dir / candidate.name)
 
     old_stems = OUTPUT_DIR / "stems" / "htdemucs" / old_stem
-    new_stems = project_dir / "stems" / "htdemucs" / old_stem
-    if old_stems.exists() and not new_stems.exists():
-        new_stems.parent.mkdir(parents=True, exist_ok=True)
-        old_stems.rename(new_stems)
+    if old_stems.exists() and not (project_dir / "stems").exists():
+        (project_dir / "stems").parent.mkdir(parents=True, exist_ok=True)
+        old_stems.parent.parent.rename(project_dir / "stems")
 
     return target_audio
 
@@ -1538,8 +1623,10 @@ def _project_manifest(project_dir: Path) -> dict | None:
         return None
     audio_files = sorted(
         [path for path in project_dir.iterdir() if _is_source_media(path)],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
+        key=lambda path: (
+            path.suffix.lower() not in {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"},
+            -path.stat().st_mtime,
+        ),
     )
     if not audio_files:
         return None
@@ -1547,12 +1634,13 @@ def _project_manifest(project_dir: Path) -> dict | None:
     audio_path = audio_files[0]
     audio_stem = audio_path.stem
     rel_audio = _relative_to_output(audio_path)
-    lrc_path = project_dir / f"{audio_stem}.lrc"
-    stems_dir = project_dir / "stems" / "htdemucs" / audio_stem
-    has_stems = (stems_dir / "vocals.wav").exists() or (stems_dir / "no_vocals.wav").exists()
+    lrc_path = _find_project_asset(project_dir, ".lrc", audio_stem)
+    stems_dir = _find_project_stems(project_dir, audio_stem)
+    has_stems = stems_dir is not None
     has_timed_lyrics = _has_timed_lyrics(lrc_path)
-    proj_path = project_dir / f"{project_dir.name}.proj.json"
-    has_proj = proj_path.exists() and proj_path.is_file()
+    proj_path = _find_project_state(project_dir)
+    has_proj = proj_path is not None
+    has_chorus_stem = (project_dir / f"{audio_stem}_minus_chorus.mp3").exists()
 
     state = "media_only"
     if has_stems and not has_timed_lyrics:
@@ -1570,9 +1658,13 @@ def _project_manifest(project_dir: Path) -> dict | None:
         "url": f"/files/{quote(rel_audio, safe='/')}",
         "type": audio_path.suffix.lower(),
         "audio_name": audio_path.name,
+        "lrc_filename": _relative_to_output(lrc_path) if lrc_path else "",
+        "ass_filename": _relative_to_output(_find_project_asset(project_dir, ".ass", audio_stem)) if _find_project_asset(project_dir, ".ass", audio_stem) else "",
+        "project_state_filename": _relative_to_output(proj_path) if proj_path else "",
         "has_stems": has_stems,
         "has_timed_lyrics": has_timed_lyrics,
         "has_proj": has_proj,
+        "has_chorus_stem": has_chorus_stem,
         "state": state,
     }
 
@@ -1647,34 +1739,6 @@ def _is_source_media(path: Path) -> bool:
         return False
     return True
 
-def _convert_srt_to_lrc(srt_path: Path, lrc_path: Path) -> None:
-    """Converts standard SRT output into LRC format for the frontend."""
-    if not srt_path.exists():
-        logger.error("[LRC CONVERSION] Missing SRT file: %s", srt_path)
-        return
-
-    content = srt_path.read_text(encoding="utf-8")
-    lrc_lines = []
-    for block in content.strip().split('\n\n'):
-        lines = block.split('\n')
-        if len(lines) >= 3:
-            times = lines[1].split(' --> ')
-            if len(times) == 2:
-                start_time = times[0].replace(',', '.')
-                try:
-                    h, m, s = start_time.split(':')
-                    total_m = int(h) * 60 + int(m)
-                    s_sec, s_ms = s.split('.')
-                    lrc_time = f"[{total_m:02d}:{s_sec}.{s_ms[:2]}]"
-                    text = " ".join(lines[2:])
-                    lrc_lines.append(f"{lrc_time}{text}")
-                except Exception as e:
-                    logger.warning("[LRC CONVERSION] Malformed timestamp %s: %s", start_time, e)
-                    continue
-
-    lrc_path.write_text("\n".join(lrc_lines), encoding="utf-8")
-    logger.info("[LRC CONVERSION] Successfully built %s", lrc_path.name)
-
 def _resolve_output_file(filename: str) -> Path:
     candidate = _resolve_output_path(filename, require_exists=True)
     if not candidate.exists() or not candidate.is_file():
@@ -1685,7 +1749,7 @@ def _resolve_output_file(filename: str) -> Path:
 def _fetch_lyrics_for_media(audio_path: Path) -> str:
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
-    lrc_file = project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
     identity = _derive_media_identity(path=audio_path, raw_name=audio_path.stem)
     res = subprocess.run(["syncedlyrics", identity["display"], "-o", str(lrc_file)], capture_output=True, text=True)
     if res.returncode != 0 or not lrc_file.exists() or lrc_file.stat().st_size < 10:
@@ -1703,6 +1767,24 @@ def _plain_text_to_lrc(text: str) -> str:
         out.append(f"[{_format_lrc_timestamp(cursor)}]{line}")
         cursor += 3.5
     return "\n".join(out)
+
+
+def _lyric_tokens(value: str) -> set[str]:
+    return set(re.findall(r"\w+", str(value or "").lower()))
+
+
+def _lyrics_result_relevance(identity: dict, entry: dict) -> float:
+    wanted_title = _lyric_tokens(identity.get("title") or identity.get("display"))
+    wanted_artist = _lyric_tokens(identity.get("artist"))
+    result_title = _lyric_tokens(entry.get("trackName"))
+    result_artist = _lyric_tokens(entry.get("artistName"))
+    if not wanted_title or not result_title:
+        return 0.0
+    title_score = len(wanted_title & result_title) / len(wanted_title)
+    artist_score = 0.0
+    if wanted_artist and result_artist:
+        artist_score = len(wanted_artist & result_artist) / len(wanted_artist)
+    return (title_score * 0.7) + (artist_score * 0.3)
 
 
 def _fetch_lyrics_from_lrclib(identity: dict) -> str:
@@ -1728,13 +1810,21 @@ def _fetch_lyrics_from_lrclib(identity: dict) -> str:
             payload = res.json()
             if not isinstance(payload, list) or not payload:
                 continue
-            entry = payload[0] if isinstance(payload[0], dict) else {}
-            synced = str(entry.get("syncedLyrics") or "").strip()
-            plain = str(entry.get("plainLyrics") or "").strip()
-            if synced:
-                return synced
-            if plain:
-                return _plain_text_to_lrc(plain)
+            entries = [entry for entry in payload if isinstance(entry, dict)]
+            ranked = sorted(entries, key=lambda entry: (
+                _lyrics_result_relevance(identity, entry),
+                bool(str(entry.get("syncedLyrics") or "").strip()),
+            ), reverse=True)
+            for entry in ranked:
+                relevance = _lyrics_result_relevance(identity, entry)
+                if relevance < 0.6:
+                    continue
+                synced = str(entry.get("syncedLyrics") or "").strip()
+                plain = str(entry.get("plainLyrics") or "").strip()
+                if synced:
+                    return synced
+                if plain:
+                    return _plain_text_to_lrc(plain)
         except Exception:
             continue
     raise RuntimeError("lrclib did not return lyrics for this track")
@@ -1801,7 +1891,7 @@ def _fetch_lyrics_from_genius(identity: dict) -> str:
 def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> str:
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
-    lrc_file = project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
     identity = _derive_media_identity(path=audio_path, raw_name=audio_path.stem)
 
     selected = str(provider or "").strip().lower()
@@ -1844,6 +1934,107 @@ def _extract_lrc_words(lrc_text: str) -> list[str]:
             continue
         words.extend([part for part in re.split(r"\s+", text) if part])
     return words
+
+
+def _detect_lrc_chorus_ranges(lrc_path: Path | None, min_repeats: int = 2, min_block: int = 2) -> list[tuple[float, float]]:
+    """Find chorus sections by detecting repeated timed-lyric line blocks (no separate AI model needed)."""
+    if not lrc_path or not lrc_path.exists():
+        return []
+    content = lrc_path.read_text(encoding="utf-8", errors="ignore")
+    tag_regex = re.compile(r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]")
+    parsed: list[tuple[float, str]] = []
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        match = tag_regex.search(stripped)
+        if not match:
+            continue
+        time_sec = (
+            int(match.group(1)) * 60
+            + int(match.group(2))
+            + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000
+        )
+        text = tag_regex.sub("", stripped).strip()
+        if text:
+            parsed.append((time_sec, text))
+
+    if len(parsed) < min_block * min_repeats:
+        return []
+    parsed.sort(key=lambda item: item[0])
+    normalized = [re.sub(r"[^\w\s]", "", text.lower()).strip() for _, text in parsed]
+
+    chorus_line_idx: set[int] = set()
+    used: set[int] = set()
+    max_block = min(8, len(parsed) // 2)
+    for block_size in range(max_block, min_block - 1, -1):
+        for i in range(len(normalized) - block_size + 1):
+            if any(j in used for j in range(i, i + block_size)):
+                continue
+            block = tuple(normalized[i:i + block_size])
+            if not any(block):
+                continue
+            occurrences = [
+                j for j in range(len(normalized) - block_size + 1)
+                if tuple(normalized[j:j + block_size]) == block
+            ]
+            if len(occurrences) >= min_repeats:
+                for occ in occurrences:
+                    occ_range = range(occ, occ + block_size)
+                    if any(j in used for j in occ_range):
+                        continue
+                    used.update(occ_range)
+                    chorus_line_idx.update(occ_range)
+
+    if not chorus_line_idx:
+        return []
+
+    ranges: list[tuple[float, float]] = []
+    for idx in sorted(chorus_line_idx):
+        start = parsed[idx][0]
+        end = parsed[idx + 1][0] if idx + 1 < len(parsed) else start + 6.0
+        ranges.append((start, end))
+
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + 0.5:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _build_chorus_aware_track(job_id: str, audio_path: Path, no_vocals_path: Path, lrc_path: Path | None, output_path: Path) -> None:
+    """Instrumental everywhere, but the original vocals play during detected chorus sections."""
+    chorus_ranges = _detect_lrc_chorus_ranges(lrc_path)
+    if not chorus_ranges:
+        res = subprocess.run(
+            [FFMPEG_BIN, "-y", "-i", str(no_vocals_path), "-q:a", "2", str(output_path)],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            logger.warning("[CHORUS STEM] job=%s no-chorus fallback failed: %s", job_id, (res.stderr or "")[-300:])
+        return
+
+    enable_expr = "+".join(f"between(t,{start:.3f},{end:.3f})" for start, end in chorus_ranges)
+    filter_complex = (
+        f"[0:a]volume=0:enable='not({enable_expr})'[full];"
+        f"[1:a]volume=0:enable='{enable_expr}'[instr];"
+        "[full][instr]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]"
+    )
+    cmd = [
+        FFMPEG_BIN, "-y",
+        "-i", str(audio_path),
+        "-i", str(no_vocals_path),
+        "-filter_complex", filter_complex,
+        "-map", "[out]",
+        "-q:a", "2",
+        str(output_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        logger.warning("[CHORUS STEM] job=%s build failed: %s", job_id, (res.stderr or "")[-500:])
 
 
 def _extract_alignment_words(json_payload: dict) -> list[dict]:
@@ -1905,8 +2096,55 @@ def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: 
     return "\n".join(corrected_lines)
 
 
+def _minor_adjust_lrc_timing(lrc_content: str, alignment_payload: dict, max_shift: float = 2.0) -> str:
+    """Adjust existing line timestamps without changing lyric text or structure."""
+    aligned_words = _extract_alignment_words(alignment_payload)
+    if not aligned_words:
+        raise RuntimeError("No aligned words were produced by Faster-Whisper.")
+
+    tag_regex = re.compile(r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]")
+    aligned_idx = 0
+    last_time = 0.0
+    output = []
+    adjusted_count = 0
+
+    for raw_line in (lrc_content or "").splitlines():
+        match = tag_regex.search(raw_line)
+        if not match:
+            output.append(raw_line)
+            continue
+
+        original_time = (
+            int(match.group(1)) * 60
+            + int(match.group(2))
+            + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000
+        )
+        text = tag_regex.sub("", raw_line).strip()
+        lyric_words = [word for word in re.split(r"\s+", text) if word]
+        target_norm = _normalize_word_token(lyric_words[0]) if lyric_words else ""
+        matched = None
+        for idx in range(aligned_idx, min(len(aligned_words), aligned_idx + 30)):
+            if target_norm and aligned_words[idx]["norm"] == target_norm:
+                matched = aligned_words[idx]
+                aligned_idx = idx + 1
+                break
+
+        adjusted_time = original_time
+        if matched:
+            proposed = float(matched["start"])
+            adjusted_time = max(original_time - max_shift, min(original_time + max_shift, proposed))
+            adjusted_count += 1
+        adjusted_time = max(last_time, adjusted_time)
+        last_time = adjusted_time
+        output.append(f"[{_format_lrc_timestamp(adjusted_time)}]{text}")
+
+    if adjusted_count == 0:
+        raise RuntimeError("Minor timing could not match the existing lyric words.")
+    return "\n".join(output)
+
+
 def _has_timed_lyrics(lrc_path: Path) -> bool:
-    if not lrc_path.exists() or not lrc_path.is_file():
+    if not lrc_path or not lrc_path.exists() or not lrc_path.is_file():
         return False
     try:
         content = lrc_path.read_text(encoding="utf-8", errors="ignore")
@@ -2116,6 +2354,7 @@ def auto_correct_word_timing(
     audio_filename: str = Form(...),
     whisper_model: str = Form(DEFAULT_WHISPER_MODEL),
     whisper_device: str = Form(DEFAULT_WHISPER_DEVICE),
+    timing_mode: str = Form("major"),
 ):
     try:
         audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
@@ -2123,9 +2362,13 @@ def auto_correct_word_timing(
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     rel_audio = _relative_to_output(audio_path)
+    selected_mode = str(timing_mode or "major").strip().lower()
+    if selected_mode not in {"minor", "major"}:
+        selected_mode = "major"
+    mode_label = "Minor" if selected_mode == "minor" else "Major"
     job = _enqueue_job(
         "word_timing",
-        f"AI word timing for {audio_path.name}",
+        f"{mode_label} AI timing for {audio_path.name}",
         "word_timing",
         section="editor",
         stage="ai word align",
@@ -2134,9 +2377,10 @@ def auto_correct_word_timing(
         project_name=audio_path.parent.name,
         whisper_model=whisper_model,
         whisper_device=whisper_device,
-        details=f"Model: {whisper_model}; Preferred device: {whisper_device}",
+        timing_mode=selected_mode,
+        details=f"Mode: {mode_label}; Model: {whisper_model}; Preferred device: {whisper_device}",
     )
-    return {"status": "queued", "message": f"Queued AI word timing correction for {audio_path.name}.", "job": job}
+    return {"status": "queued", "message": f"Queued {mode_label.lower()} AI timing correction for {audio_path.name}.", "job": job}
 
 
 @app.post("/api/delete-media")
@@ -2216,6 +2460,8 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
     else:
         target_project = old_project
 
+    _rename_project_assets(target_project, target_project.name)
+
     legacy_proj = target_project / f"{old_project.name}.proj.json"
     renamed_proj = target_project / f"{target_project.name}.proj.json"
     if legacy_proj.exists() and legacy_proj != renamed_proj and not renamed_proj.exists():
@@ -2271,9 +2517,134 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
         "message": f"Renamed project to {target_project.name}.",
         "project_name": target_project.name,
         "audio_filename": new_rel_audio,
-        "lrc_filename": _relative_to_output(target_project / f"{target_audio.stem}.lrc"),
+        "lrc_filename": _relative_to_output(_find_project_asset(target_project, ".lrc", target_audio.stem)) if _find_project_asset(target_project, ".lrc", target_audio.stem) else "",
         "audio_url": f"/files/{quote(new_rel_audio, safe='/')}",
     }
+
+
+def _estimate_word_centers(words: list[str], font_size: int) -> list[float]:
+    """Approximate per-word x offsets from line center (no glyph metrics available at render time)."""
+    avg_char_w = font_size * 0.56
+    space_w = font_size * 0.32
+    widths = [max(len(word), 1) * avg_char_w for word in words]
+    total = sum(widths) + space_w * max(0, len(words) - 1)
+    centers: list[float] = []
+    cursor = -total / 2.0
+    for width in widths:
+        centers.append(cursor + (width / 2.0))
+        cursor += width + space_w
+    return centers
+
+
+def _ass_circle_drawing(radius: float) -> str:
+    k = radius * 0.5523
+    return (
+        f"m 0 {-radius:.1f} "
+        f"b {k:.1f} {-radius:.1f} {radius:.1f} {-k:.1f} {radius:.1f} 0 "
+        f"b {radius:.1f} {k:.1f} {k:.1f} {radius:.1f} 0 {radius:.1f} "
+        f"b {-k:.1f} {radius:.1f} {-radius:.1f} {k:.1f} {-radius:.1f} 0 "
+        f"b {-radius:.1f} {-k:.1f} {-k:.1f} {-radius:.1f} 0 {-radius:.1f}"
+    )
+
+
+def _word_transform_ass(style: str, offset_ms: int, speed_ms: int) -> str:
+    """Per-word override tags for word-scope FX. Position-based styles (slide/drop) fall back to a
+    scale/alpha approximation since ASS cannot animate \\pos independently within one \\k text run."""
+    end_ms = offset_ms + max(1, speed_ms)
+    if style == "fade":
+        return rf"\alpha&HFF&\t({offset_ms},{end_ms},\alpha&H00&)"
+    if style in {"pop", "bouncing-ball"}:
+        return rf"\fscX112\fscY112\t({offset_ms},{end_ms},\fscX100\fscY100)"
+    if style in {"zoom", "slide", "drop"}:
+        return rf"\fscX80\fscY80\alpha&HFF&\t({offset_ms},{end_ms},\fscX100\fscY100\alpha&H00&)"
+    if style == "blur":
+        return rf"\blur6\t({offset_ms},{end_ms},\blur0)"
+    if style == "rotate-360":
+        return rf"\frz360\t({offset_ms},{end_ms},\frz0)"
+    if style == "glimmer":
+        mid = offset_ms + max(1, speed_ms // 2)
+        return rf"\alpha&H55&\t({offset_ms},{mid},\alpha&H00&)\t({mid},{end_ms},\alpha&H55&)"
+    if style == "shake":
+        third = max(1, speed_ms // 3)
+        return (
+            rf"\t({offset_ms},{offset_ms + third},\frx3\fry-3)"
+            rf"\t({offset_ms + third},{offset_ms + (2 * third)},\frx-3\fry3)"
+            rf"\t({offset_ms + (2 * third)},{end_ms},\frx0\fry0)"
+        )
+    if style == "flip":
+        return rf"\fscx20\t({offset_ms},{end_ms},\fscx100)"
+    return ""
+
+
+def _ass_override_color(style_color: str) -> str:
+    """Style color fields use &HAABBGGRR&; \\1c override tags expect &HBBGGRR& (no alpha byte)."""
+    inner = style_color.strip("&H")
+    if len(inner) >= 8:
+        inner = inner[2:]
+    return f"&H{inner}&"
+
+
+def _build_bouncing_ball_events(
+    words: list[str],
+    line_start: float,
+    line_end: float,
+    center_x: int,
+    line_y: int,
+    font_size: int,
+    color_hex: str,
+    fmt_time,
+) -> list[str]:
+    """One ball hops from word to word in sync with playback, bouncing in place while it waits."""
+    if not words:
+        return []
+    total_dur = max(0.3, line_end - line_start)
+    per_word = total_dur / len(words)
+    centers = _estimate_word_centers(words, font_size)
+    ball_y = line_y - round(font_size * 0.85)
+    bounce_h = max(10, round(font_size * 0.22))
+    radius = max(5, round(font_size * 0.12))
+    drawing = _ass_circle_drawing(radius)
+    ball_style = rf"{{\p1\1c{_ass_override_color(color_hex)}}}{drawing}{{\p0}}"
+    events: list[str] = []
+    prev_x = center_x + centers[0]
+    for idx in range(len(words)):
+        word_start = line_start + (idx * per_word)
+        word_end = word_start + per_word
+        target_x = center_x + centers[idx]
+        flight_ms = max(80, min(320, int(per_word * 1000 * 0.55)))
+        flight_end = min(word_end, word_start + (flight_ms / 1000.0))
+        half = (flight_end - word_start) / 2.0
+        mid_x = (prev_x + target_x) / 2.0
+        apex_y = ball_y - bounce_h
+        if half > 0.01:
+            events.append(
+                f"Dialogue: 2,{fmt_time(word_start)},{fmt_time(word_start + half)},Default,,0,0,0,,"
+                f"{{\\move({prev_x:.0f},{ball_y},{mid_x:.0f},{apex_y},0,{int(half * 1000)})}}{ball_style}"
+            )
+            events.append(
+                f"Dialogue: 2,{fmt_time(word_start + half)},{fmt_time(flight_end)},Default,,0,0,0,,"
+                f"{{\\move({mid_x:.0f},{apex_y},{target_x:.0f},{ball_y},0,{int(half * 1000)})}}{ball_style}"
+            )
+        idle_start = flight_end
+        cycle_len = 0.35
+        cycles_done = 0
+        while idle_start < word_end - 0.02 and cycles_done < 6:
+            up_end = min(word_end, idle_start + (cycle_len / 2))
+            events.append(
+                f"Dialogue: 2,{fmt_time(idle_start)},{fmt_time(up_end)},Default,,0,0,0,,"
+                f"{{\\move({target_x:.0f},{ball_y},{target_x:.0f},{apex_y},0,{int((up_end - idle_start) * 1000)})}}{ball_style}"
+            )
+            down_end = min(word_end, up_end + (cycle_len / 2))
+            if down_end > up_end:
+                events.append(
+                    f"Dialogue: 2,{fmt_time(up_end)},{fmt_time(down_end)},Default,,0,0,0,,"
+                    f"{{\\move({target_x:.0f},{apex_y},{target_x:.0f},{ball_y},0,{int((down_end - up_end) * 1000)})}}{ball_style}"
+                )
+            idle_start = down_end
+            cycles_done += 1
+        prev_x = target_x
+    return events
+
 
 def lrc_to_ass(
     lrc_path: Path,
@@ -2291,6 +2662,8 @@ def lrc_to_ass(
     text_effect: str,
     reveal_mode: str,
     preview_line_count: int,
+    render_width: int = 1920,
+    render_height: int = 1080,
 ):
     """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering."""
     # Convert Web standard Hex (#RRGGBB) to ASS color format (&HBBGGRR&)
@@ -2318,11 +2691,20 @@ def lrc_to_ass(
         default_shadow = 12
         default_outline = 3
 
+    render_width = max(320, int(render_width or 1920))
+    render_height = max(180, int(render_height or 1080))
+    layout_scale = min(render_width / 1920, render_height / 1080)
+    font_size = max(12, round(int(font_size) * layout_scale))
+    line_spacing = max(4, round(int(line_spacing) * layout_scale))
+    line_height = max(20, round((font_size * 1.1) + line_spacing))
+    center_x = round(render_width / 2)
+    center_y = round(render_height / 2)
+
     # Base ASS Subtitle file formatting headers
     ass_header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {render_width}
+PlayResY: {render_height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -2412,19 +2794,25 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
         s = t % 60
         return f"{h}:{m:02d}:{s:05.2f}"
 
-    def _karaoke_text_for_line(text: str, start_t: float, end_t: float) -> str:
+    def _karaoke_text_for_line(text: str, start_t: float, end_t: float, word_fx_style: str = "", fx_speed_ms: int = 400) -> str:
         # Use ASS \k timing so render output visibly transitions Secondary->Primary per word.
         words = [w for w in (text or "").split() if w]
-        if len(words) <= 1:
+        if not words:
             return text or ""
+        if len(words) <= 1:
+            fx_tag = _word_transform_ass(word_fx_style, 0, fx_speed_ms) if word_fx_style else ""
+            return ("{" + fx_tag + "}" + words[0]) if fx_tag else words[0]
 
         total_cs = max(20, int(round(max(0.20, end_t - start_t) * 100.0)))
         base_cs = max(1, total_cs // len(words))
         rem = max(0, total_cs - (base_cs * len(words)))
         chunks = []
+        offset_ms = 0
         for idx, word in enumerate(words):
             word_cs = base_cs + (1 if idx < rem else 0)
-            chunks.append(r"{\k" + str(word_cs) + "}" + word)
+            fx_tag = _word_transform_ass(word_fx_style, offset_ms, fx_speed_ms) if word_fx_style else ""
+            chunks.append(r"{\k" + str(word_cs) + fx_tag + "}" + word)
+            offset_ms += word_cs * 10
         return " ".join(chunks)
 
     # Generate ASS event blocks with transition/mode controls mapped from preview settings.
@@ -2433,6 +2821,7 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     show_upcoming = reveal_mode in {"block", "eager"}
     upcoming_count = (visible_lines - 1) if show_upcoming else 0
     line_height = max(30, int((font_size * 1.1) + max(0, line_spacing)))
+    page_size = visible_lines if reveal_mode == "block" else 1
 
     for i in range(len(parsed_lines)):
         start_time = parsed_lines[i][0]
@@ -2442,46 +2831,75 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
         start_str = _format_ass_time(start_time)
         end_str = _format_ass_time(end_time)
         text = parsed_lines[i][1]
-        text_payload = _karaoke_text_for_line(text, start_time, end_time)
+        is_page_start = (i % page_size == 0)
+        if fx_scope == "word" and transition_style not in {"none", ""}:
+            text_payload = _karaoke_text_for_line(text, start_time, end_time, word_fx_style=transition_style, fx_speed_ms=speed_ms)
+        else:
+            text_payload = _karaoke_text_for_line(text, start_time, end_time)
 
-        # Inject selected render effect directives
+
+        # Inject selected render effect directives (skipped for bouncing-ball, which uses a drawn
+        # ball overlay below, and for word scope, which already wrapped each \k word above).
         effect_mod = ""
-        if transition_style == "fade":
-            effect_mod = rf"{{\fad({speed_ms},{speed_ms})}}"
-        elif transition_style == "pop":
-            effect_mod = rf"{{\fscX112\fscY112\t(0,{speed_ms},\fscX100\fscY100)}}"
-        elif transition_style == "slide":
-            effect_mod = rf"{{\move(960,960,960,540,0,{speed_ms})}}"
-        elif transition_style == "zoom":
-            effect_mod = rf"{{\fscX84\fscY84\t(0,{speed_ms},\fscX100\fscY100)}}"
-        elif transition_style == "drop":
-            effect_mod = rf"{{\move(960,300,960,540,0,{speed_ms})}}"
-        elif transition_style == "blur":
-            effect_mod = rf"{{\blur6\t(0,{speed_ms},\blur0)}}"
+        if fx_scope != "word" and transition_style != "bouncing-ball":
+            if transition_style == "fade":
+                effect_mod = rf"{{\fad({speed_ms},{speed_ms})}}"
+            elif transition_style == "pop":
+                effect_mod = rf"{{\fscX112\fscY112\t(0,{speed_ms},\fscX100\fscY100)}}"
+            elif transition_style == "slide":
+                effect_mod = rf"{{\move({center_x},{round(render_height * 0.889)},{center_x},{center_y},0,{speed_ms})}}"
+            elif transition_style == "zoom":
+                effect_mod = rf"{{\fscX84\fscY84\t(0,{speed_ms},\fscX100\fscY100)}}"
+            elif transition_style == "drop":
+                effect_mod = rf"{{\move({center_x},{round(render_height * 0.278)},{center_x},{center_y},0,{speed_ms})}}"
+            elif transition_style == "blur":
+                effect_mod = rf"{{\blur6\t(0,{speed_ms},\blur0)}}"
+            elif transition_style == "rotate-360":
+                effect_mod = rf"{{\frz360\t(0,{speed_ms},\frz0)}}"
+            elif transition_style == "glimmer":
+                effect_mod = rf"{{\alpha&H55&\t(0,{speed_ms // 2},\alpha&H00&)\t({speed_ms // 2},{speed_ms},\alpha&H55&)}}"
+            elif transition_style == "shake":
+                effect_mod = rf"{{\t(0,{speed_ms // 3},\frx3\fry-3)\t({speed_ms // 3},{speed_ms * 2 // 3},\frx-3\fry3)\t({speed_ms * 2 // 3},{speed_ms},\frx0\fry0)}}"
+            elif transition_style == "flip":
+                effect_mod = rf"{{\fscx20\t(0,{speed_ms},\fscx100)}}"
 
         if reveal_mode == "continuous" and transition_style in {"slide", "drop"}:
             # Continuous mode already uses \move for vertical scrolling.
             effect_mod = ""
 
-        if fx_scope == "line":
-            effect_mod = effect_mod
-        elif fx_scope == "page" and effect_mod:
-            effect_mod = effect_mod
+        if fx_scope == "page" and reveal_mode != "continuous" and not is_page_start:
+            # The page-level entrance already played on this page's first line.
+            effect_mod = ""
 
         total_visible_now = 1 + min(upcoming_count, max(0, len(parsed_lines) - (i + 1)))
-        top_y = 540 - int(((total_visible_now - 1) * line_height) / 2)
+        top_y = center_y - int(((total_visible_now - 1) * line_height) / 2)
         current_y = top_y
-        pos_tag = rf"\an5\pos(960,{current_y})"
+        pos_tag = rf"\an5\pos({center_x},{current_y})"
         if reveal_mode == "continuous":
             scroll_span = max(line_height * 2, int(line_height * (visible_lines + 0.5)))
-            scroll_start_y = 540 + (scroll_span // 2)
-            scroll_end_y = 540 - (scroll_span // 2)
+            scroll_start_y = center_y + (scroll_span // 2)
+            scroll_end_y = center_y - (scroll_span // 2)
             scroll_ms = max(1, int((end_time - start_time) * 1000))
-            pos_tag = rf"\an5\move(960,{scroll_start_y},960,{scroll_end_y},0,{scroll_ms})"
+            pos_tag = rf"\an5\move({center_x},{scroll_start_y},{center_x},{scroll_end_y},0,{scroll_ms})"
+
 
         events.append(
             f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{{{pos_tag}}}{effect_mod}{text_payload}"
         )
+
+        if transition_style == "bouncing-ball" and fx_scope != "word":
+            events.extend(
+                _build_bouncing_ball_events(
+                    [w for w in (text or "").split() if w],
+                    start_time,
+                    end_time,
+                    center_x,
+                    current_y,
+                    font_size,
+                    p_color,
+                    _format_ass_time,
+                )
+            )
 
         # Display upcoming lines based on reveal mode (block/eager only).
         if show_upcoming and transition_style != "scroll":
@@ -2491,7 +2909,7 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
                 next_text = parsed_lines[i + offset][1]
                 next_y = top_y + (offset * line_height)
                 events.append(
-                    f"Dialogue: 1,{start_str},{end_str},Upcoming,,0,0,0,,{{\\an5\\pos(960,{next_y})}}{next_text}"
+                    f"Dialogue: 1,{start_str},{end_str},Upcoming,,0,0,0,,{{\\an5\\pos({center_x},{next_y})}}{next_text}"
                 )
 
     ass_path.write_text(ass_header + "\n" + "\n".join(events), encoding="utf-8")
@@ -2518,19 +2936,32 @@ def execute_ffmpeg_burn(
     render_device: str = DEFAULT_RENDER_DEVICE,
     job_id: str | None = None,
     use_preview_audio: bool = False,
+    render_source: str = "",
     output_filename: str = "",
     render_token: str = "",
+    render_width: int = 1280,
+    render_height: int = 720,
 ):
-    """Executes hardware-accelerated 1080p video render using NVIDIA NVENC."""
+    """Render a karaoke video at the requested resolution using NVENC when available."""
     audio_path = _resolve_output_file(audio_filename)
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
     base_name = audio_path.stem
-    lrc_path = project_dir / f"{base_name}.lrc"
-    ass_path = project_dir / f"{base_name}.ass"
+    lrc_path = _find_project_asset(project_dir, ".lrc", base_name)
+    if not lrc_path:
+        raise FileNotFoundError(f"No .lrc lyrics file found in project: {project_dir.name}")
+    ass_path = _find_project_asset(project_dir, ".ass", base_name) or project_dir / f"{base_name}.ass"
     project_label = _safe_output_name(project_dir.name, fallback_stem=base_name)
     stamp = str(render_token or datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f"))
-    mode_prefix = f"{project_label}_preview_karaoke_" if use_preview_audio else f"{project_label}_karaoke_"
+    normalized_source = str(render_source or "").strip().lower()
+    if normalized_source not in {"preview", "final", "chorus"}:
+        normalized_source = "preview" if use_preview_audio else "final"
+    mode_prefix_map = {
+        "preview": f"{project_label}_preview_karaoke_",
+        "chorus": f"{project_label}_chorus_karaoke_",
+        "final": f"{project_label}_karaoke_",
+    }
+    mode_prefix = mode_prefix_map[normalized_source]
     if output_filename:
         output_video_path = project_dir / Path(str(output_filename)).name
     else:
@@ -2545,14 +2976,18 @@ def execute_ffmpeg_burn(
                 break
             suffix += 1
 
-    # Preview renders should use original vocal audio; final export prefers accompaniment.
+    # Preview uses the original vocal audio; final uses the instrumental; chorus keeps vocals only during chorus sections.
     minus_track = project_dir / f"{base_name}_minus.mp3"
-    demucs_no_vocals = project_dir / "stems" / "htdemucs" / base_name / "no_vocals.wav"
+    chorus_track = project_dir / f"{base_name}_minus_chorus.mp3"
+    stem_dir = _find_project_stems(project_dir, base_name)
+    demucs_no_vocals = stem_dir / "no_vocals.wav" if stem_dir else None
     render_audio_path = audio_path
-    if not use_preview_audio:
+    if normalized_source == "chorus" and chorus_track.exists() and chorus_track.is_file():
+        render_audio_path = chorus_track
+    elif normalized_source != "preview":
         if minus_track.exists() and minus_track.is_file():
             render_audio_path = minus_track
-        elif demucs_no_vocals.exists() and demucs_no_vocals.is_file():
+        elif demucs_no_vocals and demucs_no_vocals.exists() and demucs_no_vocals.is_file():
             render_audio_path = demucs_no_vocals
     logger.info("[RENDER AUDIO] using %s for %s", render_audio_path.name, audio_path.name)
 
@@ -2573,13 +3008,17 @@ def execute_ffmpeg_burn(
         text_effect,
         reveal_mode,
         preview_line_count,
+        render_width=render_width,
+        render_height=render_height,
     )
 
     # 2. Build FFmpeg command stack targeting GTX 1070 NVENC cores
     # Default fallback video background container template mapping
     bg_kind = (bg_type or "color").strip().lower()
+    render_width = max(320, int(render_width or 1280))
+    render_height = max(180, int(render_height or 720))
     if bg_kind in {"color", "gradient", "spiral"}:
-        video_source = ["-f", "lavfi", "-i", f"color=c={bg_color.lstrip('#')}:s=1920x1080:r=30"]
+        video_source = ["-f", "lavfi", "-i", f"color=c={bg_color.lstrip('#')}:s={render_width}x{render_height}:r=30"]
     else:
         bg_img = project_dir / "custom_bg.jpg"
         if not bg_img.exists():
@@ -2587,6 +3026,13 @@ def execute_ffmpeg_burn(
         video_source = ["-loop", "1", "-i", str(bg_img)]
 
     vf_filters = []
+    if bg_kind not in {"color", "gradient", "spiral"}:
+        vf_filters.append(
+            f"scale={render_width}:{render_height}:force_original_aspect_ratio=decrease"
+        )
+        vf_filters.append(
+            f"pad={render_width}:{render_height}:(ow-iw)/2:(oh-ih)/2"
+        )
     if bg_kind == "gradient":
         r1, g1, b1 = _hex_to_rgb(bg_color)
         r2, g2, b2 = _hex_to_rgb(outline_color)
@@ -2601,13 +3047,12 @@ def execute_ffmpeg_burn(
         r2, g2, b2 = _hex_to_rgb(primary_color)
         vf_filters.append(
             "geq="
-            "lum='255':"
             f"r='({r1})+(({r2}-{r1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))':"
             f"g='({g1})+(({g2}-{g1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))':"
             f"b='({b1})+(({b2}-{b1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))'"
         )
 
-    vf_filters.append(f"ass='{_escape_filter_path(ass_path)}'")
+    vf_filters.append(f"ass='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(SERVED_FONTS_DIR)}'")
 
     cmd = [
         FFMPEG_BIN,
@@ -2660,6 +3105,9 @@ def burn_video(
     volume: float = Form(1.0),
     render_device: str = Form(DEFAULT_RENDER_DEVICE),
     use_preview_audio: bool = Form(False),
+    render_source: str = Form(""),
+    render_width: int = Form(1280),
+    render_height: int = Form(720),
 ):
     rel_audio = audio_filename
     try:
@@ -2670,9 +3118,16 @@ def burn_video(
         project_name = (Path(audio_filename).parts[0] if "/" in str(audio_filename) else "")
 
     safe_project = _safe_output_name(project_name, fallback_stem=Path(rel_audio).stem or "project")
+    render_width = max(320, int(render_width or 1280))
+    render_height = max(180, int(render_height or 720))
+    render_resolution = f"{render_width}x{render_height}"
     render_token = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-    mode_prefix = f"{safe_project}_preview_karaoke_" if use_preview_audio else f"{safe_project}_karaoke_"
-    output_filename = f"{mode_prefix}{render_token}.mp4"
+    normalized_source = str(render_source or "").strip().lower()
+    if normalized_source not in {"preview", "final", "chorus"}:
+        normalized_source = "preview" if use_preview_audio else "final"
+    mode_suffix_map = {"preview": "_preview", "chorus": "_chorus", "final": ""}
+    mode_suffix = mode_suffix_map[normalized_source]
+    output_filename = f"{safe_project}{mode_suffix}_{render_token}_{render_resolution}.mp4"
 
     job = _enqueue_job(
         "render",
@@ -2680,7 +3135,7 @@ def burn_video(
         "render",
         section="render",
         stage="Creating Karaoke Video",
-        target_key=f"render:{rel_audio}:{int(use_preview_audio)}",
+        target_key=f"render:{rel_audio}:{normalized_source}",
         audio_filename=rel_audio,
         project_name=project_name,
         font_name=font_name,
@@ -2702,13 +3157,18 @@ def burn_video(
         volume=volume,
         render_device=render_device,
         use_preview_audio=use_preview_audio,
+        render_source=normalized_source,
         output_filename=output_filename,
         render_token=render_token,
+        render_width=render_width,
+        render_height=render_height,
+        render_resolution=render_resolution,
         details=(
+            f"Resolution: {render_resolution}; Source: {rel_audio}; Output: {output_filename}; "
             f"Render device: {render_device}; Pitch: {pitch}; Volume: {volume}; "
             f"Font: {font_name}; Size: {font_size}; BG: {bg_type}; FX: {transition_style}/{text_effect}; "
-            f"Mode: {reveal_mode}; Speed: {fx_speed}; Scope: {fx_scope}; PreviewAudio: {use_preview_audio}; "
-            f"Output: {output_filename}"
+            f"Mode: {reveal_mode}; Speed: {fx_speed}; Scope: {fx_scope}; "
+            f"Audio Source: {normalized_source.capitalize()}"
         ),
     )
     return {"status": "queued", "message": "Queued FFmpeg render job.", "job": job}
@@ -2777,6 +3237,26 @@ def list_files(sources_only: bool = False):
     return {"files": projects}
 
 
+@app.get("/api/vocal-waveform")
+def vocal_waveform(audio_filename: str):
+    try:
+        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"message": str(exc)})
+
+    stem_dir = _find_project_stems(audio_path.parent, audio_path.stem)
+    if not stem_dir:
+        return JSONResponse(status_code=404, content={"message": "No vocals stem found for this project."})
+    vocal_path = next(
+        (stem_dir / name for name in ("vocals.wav", "vocals.mp3") if (stem_dir / name).is_file()),
+        None,
+    )
+    if not vocal_path:
+        return JSONResponse(status_code=404, content={"message": "No vocals audio file found for this project."})
+    relative = _relative_to_output(vocal_path)
+    return {"filename": relative, "url": f"/files/{quote(relative, safe='/')}"}
+
+
 @app.get("/api/load-project-state")
 def load_project_state(audio_filename: str):
     try:
@@ -2785,12 +3265,8 @@ def load_project_state(audio_filename: str):
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     project_dir = audio_path.parent
-    proj_path = project_dir / f"{project_dir.name}.proj.json"
-    if not proj_path.exists():
-        alt = sorted(project_dir.glob("*.proj.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if alt:
-            proj_path = alt[0]
-    if not proj_path.exists():
+    proj_path = _find_project_state(project_dir)
+    if not proj_path:
         return {"status": "missing", "project_name": project_dir.name, "state": {}}
 
     try:
@@ -2808,7 +3284,7 @@ def save_project_state(audio_filename: str = Form(...), state_json: str = Form(.
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     project_dir = audio_path.parent
-    proj_path = project_dir / f"{project_dir.name}.proj.json"
+    proj_path = _find_project_state(project_dir) or project_dir / f"{project_dir.name}.proj.json"
     try:
         parsed = json.loads(state_json)
     except Exception as exc:

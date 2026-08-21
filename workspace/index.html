@@ -38,13 +38,14 @@
       h1, h2, h3, h4 { color: var(--accent-hover); margin-top: 0; }
       .app-layout {
         display: grid;
-        grid-template-columns: 400px 1fr;
+        grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
         gap: 20px;
         max-width: 1900px;
         margin: 0 auto;
+        align-items: start;
       }
       .right-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-      .top-panels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+      .top-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
       .top-panels .card { margin-bottom: 0; min-height: 0; }
       .card {
         background: var(--bg-surface);
@@ -53,10 +54,14 @@
         border: 1px solid var(--border);
         margin-bottom: 16px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-        resize: both;
+        resize: vertical;
         overflow: auto;
-        min-width: 280px;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        min-width: 0;
         min-height: 120px;
+        align-self: start;
       }
       label {
         display: block;
@@ -67,6 +72,107 @@
         text-transform: uppercase;
         letter-spacing: 0.05em;
       }
+            /* Target your progress bar specifically */
+      #progressBar {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          margin: 0;
+          padding: 0; /* This removes the gap */
+          background: transparent;
+      }
+
+      /* Optional: Make the track look clean so it aligns perfectly */
+      #progressBar::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 4px;
+          background: var(--bg-surface); /* or whatever color you use */
+          border-radius: 2px;
+      }
+
+            /* 1. Strip default browser styling to remove the gap */
+      #seekBar {
+          -webkit-appearance: none;
+          appearance: none;
+          margin: 0;
+          padding: 0;
+          background: transparent; /* Hides default background */
+      }
+
+      /* 2. Style the "Track" (the line itself) so it spans 100% edge-to-edge */
+      #seekBar::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border); /* Uses your existing CSS variable */
+          border-radius: 3px;
+          cursor: pointer;
+      }
+
+      /* 3. Style the "Thumb" (the circle you drag) */
+      #seekBar::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 16px;
+          width: 16px;
+          background: var(--accent); /* Uses your existing CSS variable */
+          border-radius: 50%;
+          cursor: pointer;
+          margin-top: -5px; /* Pulls the thumb up so it centers on the line */
+      }
+
+      /* Fix for Firefox */
+      #seekBar::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+      }
+      #seekBar::-moz-range-thumb {
+          height: 16px;
+          width: 16px;
+          background: var(--accent);
+          border-radius: 50%;
+          border: none;
+      }
+        .vocal-waveform-rail {
+          position: relative;
+          height: 54px;
+          margin: 6px 0 0;
+          padding: 5px 8px;
+          background: #ffffff;
+          border: 1px solid #0b0c10;
+          border-radius: 4px 4px 0 0;
+          box-sizing: border-box;
+          cursor: pointer;
+        }
+        #vocalWaveform {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+           .vocal-waveform-tools {
+             position: absolute;
+             top: 4px;
+             right: 6px;
+             z-index: 2;
+             display: flex;
+             gap: 2px;
+           }
+           .vocal-waveform-tools button {
+             width: 22px;
+             height: 20px;
+             padding: 0;
+             border: 1px solid #111111;
+             background: #ffffff;
+             color: #111111;
+             font-size: 14px;
+             line-height: 18px;
+             cursor: pointer;
+           }
+           .vocal-waveform-tools button:hover {
+             background: #111111;
+             color: #ffffff;
+           }
       input[type="text"], input[type="number"], input[type="range"], select, textarea {
         width: 100%;
         padding: 8px 10px;
@@ -127,18 +233,19 @@
       .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .pipeline-section { border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 12px; margin-top: 12px; background: rgba(0, 0, 0, 0.2); }
       .preview-pane {
-        position: sticky;
-        top: 20px;
+        position: relative;
         display: flex;
         flex-direction: column;
         width: 100%;
         background: var(--bg-panel);
         border: 1px solid var(--border);
         border-radius: var(--radius);
-        overflow: auto;
+        overflow: hidden;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-        resize: both;
-        min-width: 540px;
+        resize: vertical;
+        max-width: 100%;
+        box-sizing: border-box;
+        min-width: 0;
         min-height: 440px;
       }
       .preview-header-overlay {
@@ -149,9 +256,16 @@
         align-items: center; justify-content: center; border-radius: var(--radius) var(--radius) 0 0;
       }
       .preview-pane:hover .preview-header-overlay { opacity: 1; }
+      .section-toggle { cursor: pointer; }
+      .section-toggle:active { cursor: grabbing; }
+      .panel-dragging { cursor: grabbing !important; user-select: none; z-index: 50; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); pointer-events: none; }
+      .panel-drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; }
+      body.panel-drag-active, body.panel-drag-active * { cursor: grabbing !important; }
       .compact-ctrl { display: flex; align-items: center; gap: 6px; background: rgba(31, 40, 51, 0.8); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; }
       .compact-ctrl input[type="color"] { width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; background: transparent; }
       .compact-ctrl select, .compact-ctrl input[type="range"] { background: transparent; border: none; padding: 0; width: 80px; color: var(--control-fg); }
+      .step-btn { width: 20px; height: 20px; padding: 0; border: 1px solid var(--control-border); background: transparent; color: var(--control-fg); cursor: pointer; line-height: 16px; }
+      .step-btn:hover { background: var(--accent); color: var(--button-fg); }
       .compact-ctrl select:focus { outline: none; }
       .compact-ctrl select option { background-color: var(--control-bg); color: var(--control-fg); }
       #canvas-wrapper { width: 100%; aspect-ratio: 16/9; background: #000; position: relative; }
@@ -260,7 +374,7 @@
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionIngestBody', this)">
             <span>
-              <span class="section-toggle-main">1. Source &amp; Ingest</span>
+              <span class="section-toggle-main">[1] Get A Song</span>
               <span class="section-toggle-sub">Hardware allocation, file uploads, and URL scraping.</span>
             </span>
             <span class="section-toggle-arrow">▾</span>
@@ -330,8 +444,8 @@
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionGrabLyricsBody', this)">
             <span>
-              <span class="section-toggle-main">2. Grab Lyrics</span>
-              <span class="section-toggle-sub">Pick the service and pull lyrics into the editor.</span>
+              <span class="section-toggle-main">[2] Pull Lyrics</span>
+              <span class="section-toggle-sub">Select Lyrics Provider to pull lyrics into the editor.</span>
             </span>
             <span class="section-toggle-arrow">▾</span>
           </button>
@@ -341,13 +455,13 @@
               <option value="lrclib" selected>lrclib</option>
               <option value="genius">Genius</option>
             </select>
-            <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Force Lyrics Grab</button>
+            <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
           </div>
         </div>
 
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionStatusBody', this)">
-            <span><span class="section-toggle-main">3. Edit &amp; Render</span></span>
+            <span><span class="section-toggle-main">[3] Edit Lyrics</span></span>
             <span class="section-toggle-arrow">▾</span>
           </button>
           <div id="sectionStatusBody" class="section-body">
@@ -357,29 +471,40 @@
             </div>
             <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..."></textarea>
             <div class="row2" style="margin-top: 10px;">
-              <button class="btn btn-wide" onclick="saveLyricsData()">Commit Lyrics</button>
-              <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming()" title="Rebuild word-level timing from current lyric lines">Auto-Correct Word Timing</button>
+              <button class="btn btn-wide" onclick="saveLyricsData()">Save Lyrics & Update Preview</button>
+              <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
+              <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('major')" title="Rebuild timing from the AI alignment">Major Auto-Correct</button>
             </div>
             <div style="display:grid; grid-template-columns: 44px 1fr 44px; gap:8px; margin-top:10px; align-items:center;">
-              <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Older lyric revision">◀</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="revertLyricsRevision()" title="Load previous committed lyric revision">Revert Lyrics</button>
-              <button class="btn btn-small" onclick="stepLyricsRevision(1)" title="Newer lyric revision">▶</button>
+              <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="revertLyricsRevision()" title="Load this lyrics revision">Load This Revision (Lyrics & Timing)</button>
+              <button class="btn btn-small" onclick="stepLyricsRevision(1)" title="Next lyrics version">▶</button>
             </div>
+          </div>
+        </div>
 
-            <div class="pipeline-section" style="margin-top: 16px">
-              <label>Render Hardware</label>
-              <select id="renderDevice" style="margin-bottom: 8px">
-                <option value="auto">Auto</option>
-                <option value="cuda" selected>GPU / NVENC</option>
-                <option value="cpu">CPU</option>
-              </select>
-              <div class="row2">
-                <button class="btn btn-small" onclick="startRender(true)">Render Preview</button>
-                <button class="btn" style="background: var(--success)" onclick="startRender(false)">Export Final</button>
-              </div>
-              <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
-              <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionRenderBody', this)">
+            <span>
+              <span class="section-toggle-main">[4] Render</span>
+              <span class="section-toggle-sub">Preview, export final, or render with chorus vocals restored.</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionRenderBody" class="section-body">
+            <label>Render Hardware</label>
+            <select id="renderDevice" style="margin-bottom: 8px">
+              <option value="auto">Auto</option>
+              <option value="cuda" selected>GPU / NVENC</option>
+              <option value="cpu">CPU</option>
+            </select>
+            <div class="row2">
+              <button class="btn btn-small" onclick="startRender('preview')" title="Uses the original vocal audio">Render Preview</button>
+              <button class="btn" style="background: var(--success)" onclick="startRender('final')" title="Instrumental audio only">Export Final</button>
             </div>
+            <button class="btn btn-small btn-wide" style="margin-top: 10px" onclick="startRender('chorus')" title="Instrumental audio, but the original vocals play during the detected chorus sections">Render with Chorus</button>
+            <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
+            <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
           </div>
         </div>
       </div>
@@ -441,19 +566,25 @@
 
             <div class="compact-ctrl">
               <span style="color: var(--text-muted)">Size</span>
-              <input type="range" id="fontSize" min="20" max="500" step="1" value="130" oninput="document.getElementById('fontSizeNum').value=this.value; updatePreview()" style="width: 50px" />
+              <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', 1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+              <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', -1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+              <input type="hidden" id="fontSize" value="130" />
               <input type="number" id="fontSizeNum" min="20" max="500" value="130" oninput="document.getElementById('fontSize').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
             </div>
 
             <div class="compact-ctrl" title="Line Spacing">
               <span style="color: var(--text-muted)">Gap</span>
-              <input type="range" id="lineSpacing" min="0" max="100" step="1" value="30" oninput="document.getElementById('lineGapNum').value=this.value; updatePreview()" style="width: 50px" />
+              <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', 1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+              <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', -1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+              <input type="hidden" id="lineSpacing" value="30" />
               <input type="number" id="lineGapNum" min="0" max="100" value="30" oninput="document.getElementById('lineSpacing').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
             </div>
 
             <div class="compact-ctrl" title="Word Padding">
               <span style="color: var(--text-muted)">Pad</span>
-              <input type="range" id="wordPadding" min="0" max="50" step="1" value="0" oninput="document.getElementById('wordPadNum').value=this.value; updatePreview()" style="width: 50px" />
+              <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', 1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+              <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', -1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+              <input type="hidden" id="wordPadding" value="0" />
               <input type="number" id="wordPadNum" min="0" max="50" value="0" oninput="document.getElementById('wordPadding').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
             </div>
 
@@ -476,10 +607,10 @@
             <div class="compact-ctrl">
               <span style="color: var(--text-muted)">FX</span>
               <select id="transitionStyle" onchange="updatePreview()" style="width: 65px">
-                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option>
+                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option>
               </select>
               <select id="fxScope" onchange="updatePreview()" style="width: 65px" title="Transition Scope">
-                <option value="page">Page</option><option value="line">Line</option>
+                <option value="page">Page</option><option value="line">Line</option><option value="word">Word</option>
               </select>
               <select id="fxSpeed" onchange="updatePreview()" style="width: 65px" title="Transition Speed">
                 <option value="0.2">Fast</option><option value="0.6" selected>Med</option><option value="1.2">Slow</option>
@@ -519,8 +650,20 @@
           </div>
         </div>
 
+        <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Vocal dynamics">
+          <canvas id="vocalWaveform" aria-label="Vocal dynamics waveform"></canvas>
+           <div class="vocal-waveform-tools" aria-label="Waveform navigation and size">
+             <button type="button" id="waveformUp" title="Increase waveform height">↑</button>
+             <button type="button" id="waveformDown" title="Decrease waveform height">↓</button>
+             <button type="button" id="waveformBack" title="Move waveform backward">←</button>
+             <button type="button" id="waveformForward" title="Move waveform forward">→</button>
+           </div>
+        </div>
+
         <div class="media-controls">
+          <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">◀◀</button>
           <button class="btn" id="playBtn" onclick="togglePlayback()" style="min-width: 60px">Play</button>
+          <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">▶▶</button>
           <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
           <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
 
@@ -551,7 +694,7 @@
           </div>
         </div>
 
-        <audio id="previewAudio" ontimeupdate="onAudioTimeUpdate()" onloadedmetadata="onAudioLoaded()"></audio>
+       <audio id="previewAudio" onloadedmetadata="onAudioLoaded()"></audio>
       </div>
       </div>
     </div>
@@ -560,6 +703,15 @@
       const canvas = document.getElementById("videoCanvas");
       const ctx = canvas.getContext("2d");
       const audio = document.getElementById("previewAudio");
+      const vocalWaveformCanvas = document.getElementById("vocalWaveform");
+      const vocalWaveformRail = document.getElementById("vocalWaveformRail");
+      let vocalWaveformPeaks = [];
+      let vocalWaveformDuration = 0;
+      let vocalWaveformContext = null;
+      let vocalWaveformLoadToken = 0;
+      let vocalWaveformGain = 1.6;
+      let vocalWaveformWindowStart = 0;
+      const vocalWaveformWindowSize = 0.4;
 
       let lyricLines = [];
       let bgImageObj = null;
@@ -567,6 +719,7 @@
       let selectedAudioFilename = "";
       let selectedProjectName = "";
       let selectedBgFile = null;
+      let lastCommittedLyricsText = "";
       let jobPollTimer = null;
       let lastJobStatusById = new Map();
       let isSeekingPreview = false;
@@ -585,6 +738,214 @@
       let previewHeight = 720;
       let previewShouldStartAtZero = false;
       let karaokePlaceholderImg = null;
+      let activeFxScope = "page";
+      let activeTransitionStyle = "none";
+      let activeFxSpeed = 0.6;
+      let bouncingBallCandidate = null;
+
+        function drawVocalWaveform() {
+          if (!vocalWaveformCanvas || !vocalWaveformRail) return;
+          const width = Math.max(1, Math.floor(vocalWaveformRail.clientWidth - 16));
+          const height = Math.max(1, Math.floor(vocalWaveformRail.clientHeight - 10));
+          const dpr = window.devicePixelRatio || 1;
+          const pixelWidth = Math.floor(width * dpr);
+          const pixelHeight = Math.floor(height * dpr);
+          if (vocalWaveformCanvas.width !== pixelWidth || vocalWaveformCanvas.height !== pixelHeight) {
+            vocalWaveformCanvas.width = pixelWidth;
+            vocalWaveformCanvas.height = pixelHeight;
+          }
+          const waveformCtx = vocalWaveformCanvas.getContext("2d");
+          waveformCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          waveformCtx.clearRect(0, 0, width, height);
+          waveformCtx.fillStyle = "#ffffff";
+          waveformCtx.fillRect(0, 0, width, height);
+          waveformCtx.strokeStyle = "#111111";
+          waveformCtx.lineWidth = 1;
+          waveformCtx.beginPath();
+          waveformCtx.moveTo(0, height / 2);
+          waveformCtx.lineTo(width, height / 2);
+          waveformCtx.stroke();
+
+          if (vocalWaveformPeaks.length) {
+            const startIndex = Math.floor(vocalWaveformWindowStart * vocalWaveformPeaks.length);
+            const endIndex = Math.max(startIndex + 1, Math.ceil((vocalWaveformWindowStart + vocalWaveformWindowSize) * vocalWaveformPeaks.length));
+            const visiblePeaks = vocalWaveformPeaks.slice(startIndex, endIndex);
+            waveformCtx.fillStyle = "#111111";
+            const step = width / visiblePeaks.length;
+            visiblePeaks.forEach((peak, index) => {
+              const amplitude = Math.max(2, Math.min(height * 0.48, peak * vocalWaveformGain * (height * 0.48)));
+              const barWidth = Math.max(1, step * 0.76);
+              const x = index * step + ((step - barWidth) / 2);
+              waveformCtx.fillRect(x, (height / 2) - amplitude, barWidth, amplitude * 2);
+            });
+          }
+
+          const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : vocalWaveformDuration;
+          if (duration > 0) {
+              const relativePosition = ((audio.currentTime / duration) - vocalWaveformWindowStart) / vocalWaveformWindowSize;
+              if (relativePosition < 0 || relativePosition > 1) return;
+              const x = Math.max(0, Math.min(width, relativePosition * width));
+            waveformCtx.strokeStyle = "#d71920";
+            waveformCtx.lineWidth = 2;
+            waveformCtx.beginPath();
+            waveformCtx.moveTo(x, 0);
+            waveformCtx.lineTo(x, height);
+            waveformCtx.stroke();
+          }
+        }
+
+        async function loadVocalWaveform(audioFilename) {
+          const token = ++vocalWaveformLoadToken;
+          vocalWaveformPeaks = [];
+          vocalWaveformDuration = 0;
+          vocalWaveformWindowStart = 0;
+          drawVocalWaveform();
+          if (!audioFilename) return;
+          try {
+            const { res, data } = await fetchJsonSafe(`/api/vocal-waveform?audio_filename=${encodeURIComponent(audioFilename)}`, {}, "Vocal waveform API");
+            if (!res.ok || token !== vocalWaveformLoadToken) return;
+            const response = await fetch(data.url);
+            if (!response.ok || token !== vocalWaveformLoadToken) return;
+            const buffer = await response.arrayBuffer();
+            if (!vocalWaveformContext) {
+              vocalWaveformContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const decoded = await vocalWaveformContext.decodeAudioData(buffer);
+            if (token !== vocalWaveformLoadToken) return;
+            vocalWaveformDuration = decoded.duration;
+            const samples = decoded.getChannelData(0);
+            const bucketCount = Math.max(240, Math.min(1600, Math.floor(vocalWaveformRail.clientWidth * 2)));
+            const bucketSize = Math.max(1, Math.floor(samples.length / bucketCount));
+              vocalWaveformPeaks = Array.from({ length: bucketCount }, (_, bucket) => {
+              const start = bucket * bucketSize;
+              const end = Math.min(samples.length, start + bucketSize);
+              let peak = 0;
+              for (let index = start; index < end; index += 1) peak = Math.max(peak, Math.abs(samples[index]));
+              return peak;
+            });
+              const peakMax = Math.max(...vocalWaveformPeaks, 0.001);
+              vocalWaveformPeaks = vocalWaveformPeaks.map((peak) => peak / peakMax);
+            drawVocalWaveform();
+          } catch (error) {
+            if (token === vocalWaveformLoadToken) console.warn("Vocal waveform unavailable", error);
+          }
+        }
+
+        function seekFromVocalWaveform(event) {
+          if (!vocalWaveformRail) return;
+          const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : vocalWaveformDuration;
+          if (!duration) return;
+          const rect = vocalWaveformRail.getBoundingClientRect();
+          const windowPosition = vocalWaveformWindowStart + (((event.clientX - rect.left) / rect.width) * vocalWaveformWindowSize);
+          audio.currentTime = Math.max(0, Math.min(duration, windowPosition * duration));
+          syncPlaybackUi();
+        }
+
+        vocalWaveformRail?.addEventListener("click", seekFromVocalWaveform);
+        document.getElementById("waveformUp")?.addEventListener("click", (event) => {
+          event.stopPropagation();
+          vocalWaveformGain = Math.min(3.5, vocalWaveformGain + 0.25);
+          drawVocalWaveform();
+        });
+        document.getElementById("waveformDown")?.addEventListener("click", (event) => {
+          event.stopPropagation();
+          vocalWaveformGain = Math.max(0.5, vocalWaveformGain - 0.25);
+          drawVocalWaveform();
+        });
+        document.getElementById("waveformBack")?.addEventListener("click", (event) => {
+          event.stopPropagation();
+          vocalWaveformWindowStart = Math.max(0, vocalWaveformWindowStart - vocalWaveformWindowSize * 0.75);
+          drawVocalWaveform();
+        });
+        document.getElementById("waveformForward")?.addEventListener("click", (event) => {
+          event.stopPropagation();
+          vocalWaveformWindowStart = Math.min(1 - vocalWaveformWindowSize, vocalWaveformWindowStart + vocalWaveformWindowSize * 0.75);
+          drawVocalWaveform();
+        });
+        window.addEventListener("resize", drawVocalWaveform);
+// 1. Variable to keep track of our rendering loop
+      let renderLoopId = null;
+
+      // 2. The new 60fps rendering engine
+      function startRenderLoop() {
+          // Prevent multiple loops from running at the same time
+          if (renderLoopId) cancelAnimationFrame(renderLoopId);
+
+          function loop() {
+              // This calls your existing canvas drawing function
+              // It will now run up to 60 times a second!
+              updatePreview();
+              drawVocalWaveform();
+
+              // Request the next frame
+              renderLoopId = requestAnimationFrame(loop);
+          }
+
+          // Kick off the first frame
+          loop();
+      }
+
+      function stopRenderLoop() {
+          if (renderLoopId) {
+              cancelAnimationFrame(renderLoopId);
+              renderLoopId = null;
+          }
+      }
+
+      // 3. Automatically start/stop the loop based on audio state
+      const previewAudio = document.getElementById('previewAudio');
+
+      if (previewAudio) {
+          // When the music plays, start the high-speed loop
+          previewAudio.addEventListener('play', startRenderLoop);
+
+          // When the music pauses or ends, stop the loop to save CPU
+          previewAudio.addEventListener('pause', stopRenderLoop);
+          previewAudio.addEventListener('ended', stopRenderLoop);
+
+          // If the user drags the timeline/seeks while paused, force a single frame update
+          previewAudio.addEventListener('seeking', () => {
+              syncPlaybackUi();
+            });
+            previewAudio.addEventListener('timeupdate', syncPlaybackUi);
+            previewAudio.addEventListener('error', () => {
+              const source = previewAudio.currentSrc || previewAudio.src || "(empty source)";
+              pushFrontendDebugIssue({
+                message: `Preview audio could not be played: ${source}`,
+                file: "previewAudio",
+                trace: previewAudio.error ? `Media error code ${previewAudio.error.code}` : "",
+              });
+          });
+      }
+
+      // 4. Update the Play/Pause button logic
+      function togglePlayback() {
+          if (!previewAudio) return;
+
+          if (previewAudio.paused) {
+              if (!previewAudio.src) {
+                setStatus("Select a media file before pressing Play.", true);
+                return;
+              }
+              previewAudio.play().catch((error) => {
+                setStatus("Preview audio could not be played. Check that the source file is available.", true);
+                pushFrontendDebugIssue({ message: error.message || "Preview audio playback failed", file: "previewAudio", trace: error.stack || "" });
+              });
+          } else {
+              previewAudio.pause();
+          }
+      }
+
+      const playButton = document.getElementById('playBtn');
+      if (previewAudio) {
+          previewAudio.addEventListener('play', () => {
+              if (playButton) playButton.textContent = 'Pause';
+          });
+
+          previewAudio.addEventListener('pause', () => {
+              if (playButton) playButton.textContent = 'Play';
+          });
+      }
 
       function _hexToRgbSafe(color) {
         const raw = String(color || "").trim();
@@ -856,8 +1217,8 @@
         const select = document.getElementById("themeSelect");
         if (!select) return;
         try {
-          const res = await fetch("/api/themes");
-          const data = await res.json();
+          const { res, data } = await fetchJsonSafe("/api/themes", {}, "Themes API");
+          if (!res.ok) throw new Error(data.message || `Themes API failed (HTTP ${res.status})`);
           themeCatalog = data.themes || [];
           select.innerHTML = "";
           themeCatalog.forEach((theme) => {
@@ -869,6 +1230,8 @@
           const preferred = localStorage.getItem(getThemeStorageKey()) || (themeCatalog[0] && themeCatalog[0].id) || "";
           applyThemeById(preferred, false);
         } catch (err) {
+          themeCatalog = [];
+          select.innerHTML = '<option value="">Themes unavailable</option>';
           document.getElementById("themeMeta").textContent = `Theme load failed: ${err}`;
         }
       }
@@ -942,8 +1305,7 @@
         summaryEl.textContent = "Capturing backend and frontend diagnostics...";
         outputEl.textContent = "Running debugger...";
         try {
-          const res = await fetch("/api/debug-report");
-          const data = await res.json();
+          const { data } = await fetchJsonSafe("/api/debug-report", {}, "Debugger API");
           const syntaxIssues = data.syntax_issues || [];
           const runtimeIssues = data.runtime_issues || [];
           const frontendIssues = frontendDebugIssues.slice();
@@ -968,8 +1330,12 @@
       }
 
       function capturePreviewConfig() {
+        const resolution = document.getElementById("previewResolution")?.value || "1280x720";
+        const [renderWidth, renderHeight] = resolution.split("x").map((value) => Number(value));
         return {
           audio_filename: selectedAudioFilename,
+          render_width: Number.isFinite(renderWidth) ? renderWidth : 1280,
+          render_height: Number.isFinite(renderHeight) ? renderHeight : 720,
           font_name: document.getElementById("fontSelect").value || "Arial",
           font_size: document.getElementById("fontSize").value,
           line_spacing: document.getElementById("lineSpacing").value,
@@ -989,6 +1355,136 @@
           volume: document.getElementById("volume").value,
           render_device: document.getElementById("renderDevice").value,
         };
+      }
+
+      let controlStepTimer = null;
+      let controlStepState = null;
+
+      function startControlStep(id, direction, min, max, displayId, event) {
+        event?.preventDefault();
+        stopControlStep();
+        const apply = () => {
+          const input = document.getElementById(id);
+          const display = document.getElementById(displayId);
+          if (!input || !display) return;
+          const value = Math.max(min, Math.min(max, Number(input.value || 0) + direction));
+          input.value = value;
+          display.value = value;
+          updatePreview();
+        };
+        apply();
+        const startedAt = performance.now();
+        controlStepState = { apply, startedAt, direction };
+        controlStepTimer = window.setInterval(() => {
+          const elapsed = performance.now() - startedAt;
+          const repeats = elapsed > 3000 ? 8 : elapsed > 1800 ? 4 : elapsed > 800 ? 2 : 1;
+          for (let index = 0; index < repeats; index += 1) apply();
+        }, 100);
+      }
+
+      function stopControlStep(event) {
+        event?.preventDefault();
+        if (controlStepTimer) window.clearInterval(controlStepTimer);
+        controlStepTimer = null;
+        controlStepState = null;
+      }
+
+      function enablePanelDragging() {
+        // Cards reorder (push siblings aside) within their own container instead of free-floating and overlapping.
+        // Only the title bar starts a drag; the native corner handle stays dedicated to resizing, and a plain
+        // click on the title bar still toggles the section since drag only engages past a movement threshold.
+        const groups = [
+          Array.from(document.querySelectorAll(".app-layout > .card")),
+          Array.from(document.querySelectorAll(".top-panels > .card")),
+        ];
+        const dragThreshold = 6;
+
+        groups.forEach((group) => {
+          group.forEach((panel) => {
+            const handle = panel.querySelector(":scope > .section-toggle");
+            if (!handle) return;
+            handle.addEventListener("click", (event) => {
+              if (handle.dataset.justDragged === "1") {
+                delete handle.dataset.justDragged;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+              }
+            }, true);
+            handle.addEventListener("pointerdown", (event) => {
+              if (event.button !== 0) return;
+              const container = panel.parentElement;
+              const siblings = Array.from(container.children).filter((el) => el !== panel && el.classList.contains("card"));
+              const startRect = panel.getBoundingClientRect();
+              const pointerOffsetX = event.clientX - startRect.left;
+              const pointerOffsetY = event.clientY - startRect.top;
+              const startX = event.clientX;
+              const startY = event.clientY;
+              let dragging = false;
+              let lastTarget = null;
+
+              const beginDrag = () => {
+                dragging = true;
+                handle.setPointerCapture(event.pointerId);
+                document.body.classList.add("panel-drag-active");
+                panel.classList.add("panel-dragging");
+                panel.style.position = "fixed";
+                panel.style.left = `${startRect.left}px`;
+                panel.style.top = `${startRect.top}px`;
+                panel.style.width = `${startRect.width}px`;
+              };
+
+              const move = (moveEvent) => {
+                if (!dragging) {
+                  if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < dragThreshold) return;
+                  moveEvent.preventDefault();
+                  beginDrag();
+                }
+                panel.style.left = `${moveEvent.clientX - pointerOffsetX}px`;
+                panel.style.top = `${moveEvent.clientY - pointerOffsetY}px`;
+
+                let closestSibling = null;
+                let closestDist = Infinity;
+                siblings.forEach((sibling) => {
+                  const rect = sibling.getBoundingClientRect();
+                  const dist = Math.hypot(
+                    (rect.left + rect.width / 2) - moveEvent.clientX,
+                    (rect.top + rect.height / 2) - moveEvent.clientY,
+                  );
+                  if (dist < closestDist) { closestDist = dist; closestSibling = { sibling, rect }; }
+                });
+                if (lastTarget) lastTarget.classList.remove("panel-drop-target");
+                if (closestSibling) {
+                  const { sibling, rect } = closestSibling;
+                  sibling.classList.add("panel-drop-target");
+                  lastTarget = sibling;
+                  const placeBefore = moveEvent.clientY < rect.top + (rect.height / 2);
+                  container.insertBefore(panel, placeBefore ? sibling : sibling.nextSibling);
+                }
+              };
+
+              const stop = () => {
+                handle.releasePointerCapture?.(event.pointerId);
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", stop);
+                window.removeEventListener("pointercancel", stop);
+                document.body.classList.remove("panel-drag-active");
+                if (lastTarget) lastTarget.classList.remove("panel-drop-target");
+                if (dragging) {
+                  handle.dataset.justDragged = "1";
+                  panel.classList.remove("panel-dragging");
+                  panel.style.position = "";
+                  panel.style.left = "";
+                  panel.style.top = "";
+                  panel.style.width = "";
+                }
+              };
+
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", stop);
+              window.addEventListener("pointercancel", stop);
+            });
+          });
+        });
       }
 
       function formatLrcTime(seconds) {
@@ -1025,7 +1521,8 @@
 
       function findManualCursorIndexAtTime(nowSec) {
         const entries = manualTimingState.entries || [];
-        if (!entries.length) return 0;
+        const validEntries = entries.filter((entry) => entry && Number.isFinite(entry.start));
+        if (!validEntries.length) return -1;
 
         for (let i = 0; i < entries.length; i += 1) {
           const entry = entries[i];
@@ -1034,7 +1531,8 @@
           if (nowSec >= entry.start && nowSec < end) return i;
           if (nowSec < entry.start) return i;
         }
-        return Math.max(0, entries.length - 1);
+        const lastValidIndex = entries.reduce((last, entry, index) => Number.isFinite(entry?.start) ? index : last, -1);
+        return lastValidIndex === entries.length - 1 ? lastValidIndex : -1;
       }
 
       function alignManualTimingToCurrentPlayback() {
@@ -1047,7 +1545,10 @@
         }
 
         let cursor = findManualCursorIndexAtTime(now);
-        if (!manualTimingState.entries.length) {
+        if (cursor < 0) {
+          cursor = getPlaybackWordIndexAtTime(now, true);
+        }
+        if (cursor < 0) {
           const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
           if (dur > 0) {
             const ratio = Math.max(0, Math.min(1, now / dur));
@@ -1098,7 +1599,14 @@
               resetManualTimingSession();
             }
           }
-          alignManualTimingToCurrentPlayback();
+          const forcedPlaybackIndex = getPlaybackWordIndexAtTime(audio.currentTime || 0, true);
+          manualTimingState.cursor = Math.max(0, Math.min(
+            manualTimingState.words.length - 1,
+            forcedPlaybackIndex,
+          ));
+          manualTimingState.activeStart = null;
+          manualTimingState.previewFromAppliedLyrics = true;
+          persistManualTiming();
           setStatus("Manual timing enabled at current playback word. Use 'S' at start of word and 'F' at end of word.");
         } else {
           persistManualTiming();
@@ -1133,10 +1641,46 @@
 
       function updateManualTimingHud() {
         const total = manualTimingState.words.length;
-        const currentWord = manualTimingState.words[manualTimingState.cursor] || "-";
-        const timedCount = manualTimingState.entries.filter((entry) => Number.isFinite(entry.start)).length;
+        const currentWord = getPlaybackWordAtTime(audio.currentTime || 0) || manualTimingState.words[manualTimingState.cursor] || "-";
+        const currentIndex = getPlaybackWordIndexAtTime(audio.currentTime || 0);
+        const displayTotal = total || lyricLines.reduce((sum, line) => sum + (line.text || "").split(/\s+/).filter(Boolean).length, 0);
         document.getElementById("manualCurrentWord").textContent = currentWord;
-        document.getElementById("manualProgressText").textContent = `${Math.min(timedCount, total)} / ${total}`;
+        document.getElementById("manualProgressText").textContent = displayTotal ? `${Math.min(currentIndex + 1, displayTotal)} / ${displayTotal}` : "0 / 0";
+      }
+
+      function getPlaybackWordIndexAtTime(time, ignoreManual = false) {
+        if (!ignoreManual && manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length) {
+          return Math.max(0, Math.min(manualTimingState.words.length - 1, manualTimingState.cursor));
+        }
+        let wordOffset = 0;
+        for (let lineIndex = 0; lineIndex < lyricLines.length; lineIndex += 1) {
+          const line = lyricLines[lineIndex];
+          const words = (line.text || "").split(/\s+/).filter(Boolean);
+          const nextTime = lyricLines[lineIndex + 1]?.time || (line.time + 3);
+          if (time >= line.time && time < nextTime) {
+            const progress = Math.max(0, Math.min(0.999, (time - line.time) / Math.max(0.05, nextTime - line.time)));
+            return wordOffset + Math.min(words.length - 1, Math.floor(progress * words.length));
+          }
+          wordOffset += words.length;
+        }
+        return Math.max(0, wordOffset - 1);
+      }
+
+      function getPlaybackWordAtTime(time) {
+        if (manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length) {
+          return manualTimingState.words[manualTimingState.cursor] || "";
+        }
+        if (!lyricLines.length) return "";
+        let activeLine = lyricLines[0];
+        for (let index = 0; index < lyricLines.length; index += 1) {
+          if (time >= lyricLines[index].time) activeLine = lyricLines[index];
+          else break;
+        }
+        const nextTime = lyricLines[lyricLines.indexOf(activeLine) + 1]?.time || (activeLine.time + 3);
+        const words = (activeLine.text || "").split(/\s+/).filter(Boolean);
+        if (!words.length) return "";
+        const progress = Math.max(0, Math.min(0.999, (time - activeLine.time) / Math.max(0.05, nextTime - activeLine.time)));
+        return words[Math.min(words.length - 1, Math.floor(progress * words.length))] || "";
       }
 
       function estimateActiveWordDuration() {
@@ -1293,6 +1837,8 @@
         const lrc = buildManualTimingLrc();
         if (!lrc) { setStatus("No manual timing entries yet.", true); return; }
         if (!selectedLrcFilename) { setStatus("Select source media first.", true); return; }
+        const previous = lastCommittedLyricsText || document.getElementById("lyricsEditor").value || "";
+        if (lrc === previous) { setStatus("No timing changes to push."); return; }
         manualTimingApplyInFlight = true;
         document.getElementById("lyricsEditor").value = lrc;
         parseLrcData(lrc);
@@ -1306,6 +1852,7 @@
           const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
           const data = await res.json();
           if (!res.ok) throw new Error(data.message);
+          lastCommittedLyricsText = lrc;
           setStatus(data.message || "Manual timing applied and saved.");
         } catch (err) { setStatus(`Failed to save: ${err}`, true); }
         finally { manualTimingApplyInFlight = false; }
@@ -1331,7 +1878,7 @@
       function renderJobs(jobs) {
         const container = document.getElementById("job-list");
         if (!jobs || jobs.length === 0) {
-          container.textContent = selectedProjectName ? `No active jobs for ${selectedProjectName}.` : "No jobs yet.";
+          container.textContent = selectedProjectName ? `Nothing running for ${selectedProjectName}.` : "No jobs running.";
           return;
         }
         container.innerHTML = "";
@@ -1340,20 +1887,51 @@
           item.className = `job-item`;
           const canCancel = job.status === "queued" || job.status === "running";
           const statClass = `state-${job.status || "waiting"}`;
-          const liveStage = job.stage || job.label || "Working";
+          const stageLabels = {
+            ingest: "Preparing media",
+            download: "Downloading media",
+            "stem separation": "Separating vocals",
+            "package accompaniment": "Preparing accompaniment",
+            "lyrics fetch": "Finding lyrics",
+            transcription: "Transcribing vocals",
+            "word timing": "Aligning word timing",
+            render: "Rendering video",
+            "Creating Karaoke Video": "Rendering video",
+            "render fallback": "Switching to CPU fallback",
+          };
+          const statusLabels = {
+            queued: "Waiting",
+            running: "In progress",
+            completed: "Complete",
+            failed: "Needs attention",
+            cancelled: "Cancelled",
+          };
+          const liveStage = stageLabels[job.stage] || job.stage || job.label || "Working";
+          const statusLabel = statusLabels[job.status] || job.status || "Waiting";
           const metaBits = [];
-          if (job.project_name) metaBits.push(`Project: ${job.project_name}`);
+          if (job.project_name) metaBits.push(job.project_name);
+          if (job.timing_mode) metaBits.push(`Timing: ${job.timing_mode === "minor" ? "Minor" : "Major"}`);
+          if (job.render_source) metaBits.push(`Audio: ${job.render_source.charAt(0).toUpperCase()}${job.render_source.slice(1)}`);
+          if (job.render_resolution) metaBits.push(`Resolution: ${job.render_resolution}`);
           if (job.audio_filename) metaBits.push(`Source: ${job.audio_filename}`);
           if (job.output_filename) metaBits.push(`Output: ${job.output_filename}`);
+          if (job.stem_device || job.whisper_device || job.render_device) {
+            const devices = [job.stem_device, job.whisper_device, job.render_device]
+              .filter(Boolean)
+              .map((device) => device.toLowerCase() === "cuda" ? "GPU" : device.toUpperCase())
+              .filter((device, index, list) => list.indexOf(device) === index);
+            if (devices.length) metaBits.push(`Hardware: ${devices.join(" + ")}`);
+          }
           const metaText = metaBits.join(" | ");
+          const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
           item.innerHTML = `
-            <div class="job-top"><div><div class="job-label">${liveStage}</div><div class="job-sub" title="${job.label || ""}">${job.label || ""}</div></div><span class="state-badge ${statClass}">${job.status}</span></div>
-            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${job.message || ""}</div>
+            <div class="job-top"><div><div class="job-label">${liveStage}</div><div class="job-sub" title="${job.label || ""}">${job.label || ""}</div></div><span class="state-badge ${statClass}">${statusLabel}</span></div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${job.message || "Working..."}</div>
             <div style="font-size:11px; color:var(--text-muted); margin-top:4px; word-break:break-word;">${metaText}</div>
-            <div class="job-bar"><div class="job-bar-fill" style="width:${Math.max(0, Math.min(100, job.progress || 0))}%;"></div></div>
+            <div class="job-bar"><div class="job-bar-fill" style="width:${progress}%;"></div></div>
             <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center;">
-                <span style="font-size:11px;">${job.progress || 0}%</span>
-                ${canCancel ? `<button class="btn btn-small" data-job-id="${job.id}">Cancel</button>` : `<span style="font-size:11px;">${job.audio_filename || ""}</span>`}
+                <span style="font-size:11px;">${progress}%</span>
+                ${canCancel ? `<button class="btn btn-small" data-job-id="${job.id}">Stop</button>` : `<span style="font-size:11px;">${job.output_filename || ""}</span>`}
             </div>`;
           if (canCancel) item.querySelector("button").addEventListener("click", () => cancelJob(job.id));
           container.appendChild(item);
@@ -1494,20 +2072,21 @@
         }
       }
 
-      async function loadFileManifest() {
-        const res = await fetch("/api/list-files?sources_only=true");
-        const data = await res.json();
+      async function loadFileManifest(retryCount = 0) {
         const container = document.getElementById("file-vault");
-        container.innerHTML = "";
-        if (!data.files || data.files.length === 0) { container.textContent = "No media found."; return; }
-        data.files.forEach((f) => {
-          const row = document.createElement("div"); row.className = "file-row";
-          const projectLabel = f.project_name || f.name;
-          const lrcStateClass = f.has_timed_lyrics ? "state-ready" : "state-waiting";
-          const lrcStateText = f.has_timed_lyrics ? "LRC Ready" : "LRC Missing";
-          const saveStateClass = f.has_proj ? "state-completed" : "state-waiting";
-          const saveStateText = f.has_proj ? "Saved" : "Unsaved";
-          row.innerHTML = `
+        try {
+          const { res, data } = await fetchJsonSafe("/api/list-files?sources_only=true", {}, "Media vault API");
+          if (!res.ok) throw new Error(data.message || `Media vault API failed (HTTP ${res.status})`);
+          container.innerHTML = "";
+          if (!data.files || data.files.length === 0) { container.textContent = "No media found."; return; }
+          data.files.forEach((f) => {
+            const row = document.createElement("div"); row.className = "file-row";
+            const projectLabel = f.project_name || f.name;
+            const lrcStateClass = f.has_timed_lyrics ? "state-ready" : "state-waiting";
+            const lrcStateText = f.has_timed_lyrics ? "LRC Ready" : "LRC Missing";
+            const saveStateClass = f.has_proj ? "state-completed" : "state-waiting";
+            const saveStateText = f.has_proj ? "Saved" : "Unsaved";
+            row.innerHTML = `
             <div class="file-row-main">
               <span class="file-name" title="${projectLabel}">${projectLabel}</span>
             </div>
@@ -1518,12 +2097,22 @@
               <button class="btn btn-small vault-btn" data-action="rename" title="Rename this project folder">Rename</button>
               <button class="btn btn-small vault-btn" style="border-color:var(--danger); color:var(--danger);" data-action="remove" title="Delete this project and all files">Remove</button>
             </div>`;
-          if (selectedAudioFilename === f.audio_filename) row.classList.add("file-row-active");
-          row.querySelector('[data-action="use"]').addEventListener("click", () => stageTrackTarget(f.url, f.audio_filename, f.project_name));
-          row.querySelector('[data-action="rename"]').addEventListener("click", () => beginRenameMedia(f.audio_filename, projectLabel));
-          row.querySelector('[data-action="remove"]').addEventListener("click", () => deleteMediaAsset(f.audio_filename, projectLabel));
-          container.appendChild(row);
-        });
+            if (selectedAudioFilename === f.audio_filename) row.classList.add("file-row-active");
+            row.querySelector('[data-action="use"]').addEventListener("click", () => stageTrackTarget(f.url, f.audio_filename, f.project_name, f.lrc_filename || ""));
+            row.querySelector('[data-action="rename"]').addEventListener("click", () => beginRenameMedia(f.audio_filename, projectLabel));
+            row.querySelector('[data-action="remove"]').addEventListener("click", () => deleteMediaAsset(f.audio_filename, projectLabel));
+            container.appendChild(row);
+          });
+          return;
+        } catch (err) {
+          if (retryCount < 3) {
+            window.setTimeout(() => loadFileManifest(retryCount + 1), 1000);
+            return;
+          }
+          container.textContent = "Media vault unavailable. Retrying...";
+          setStatus(`Media vault load failed: ${err}`, true);
+          return;
+        }
       }
 
       async function beginRenameMedia(filename, currentProjectName = "") {
@@ -1562,7 +2151,12 @@
             lyricsRevisionCursorByAudio[renamedAudio] = lyricsRevisionCursorByAudio[oldFilename];
             delete lyricsRevisionCursorByAudio[oldFilename];
           }
-          await stageTrackTarget(data.audio_url || `/files/${encodeURIComponent(renamedAudio).replace(/%2F/g, "/")}`, renamedAudio, renamedProject);
+          await stageTrackTarget(
+            data.audio_url || `/files/${encodeURIComponent(renamedAudio).replace(/%2F/g, "/")}`,
+            renamedAudio,
+            renamedProject,
+            data.lrc_filename || selectedLrcFilename,
+          );
           if (data.lrc_filename) {
             selectedLrcFilename = data.lrc_filename;
             document.getElementById("activeLyricsLabel").textContent = `Editing: ${selectedLrcFilename}`;
@@ -1586,6 +2180,7 @@
           delete lyricsRevisionHistoryByAudio[filename];
           document.getElementById("lyricsEditor").value = "";
           lyricLines = []; audio.pause(); audio.removeAttribute("src"); audio.load();
+          loadVocalWaveform("");
           document.getElementById("activeLyricsLabel").textContent = "No media mounted";
           updateLyricsReadyIndicator(); updatePreview();
         }
@@ -1593,21 +2188,24 @@
         await loadFileManifest(); await loadJobs();
       }
 
-      async function stageTrackTarget(audioUrl, filename, projectName = "") {
+      async function stageTrackTarget(audioUrl, filename, projectName = "", lrcFilename = "") {
         if (manualTimingState.enabled) persistManualTiming();
         selectedAudioFilename = filename;
         selectedProjectName = projectName || (filename || "").split("/")[0] || "";
+        loadVocalWaveform(filename);
         audio.pause();
         audio.removeAttribute("src");
         audio.load();
-        audio.src = audioUrl;
+        audio.src = new URL(audioUrl, window.location.href).href;
+        audio.load();
         previewShouldStartAtZero = true;
         applyPreviewAudioTuning();
-        selectedLrcFilename = `${filename.slice(0, filename.lastIndexOf(".")) || filename}.lrc`;
+        selectedLrcFilename = lrcFilename || `${filename.slice(0, filename.lastIndexOf(".")) || filename}.lrc`;
         document.getElementById("activeLyricsLabel").textContent = `Editing: ${selectedLrcFilename}`;
         const res = await fetch(`/api/load-lyrics?filename=${encodeURIComponent(selectedLrcFilename)}`);
         const data = await res.json();
         document.getElementById("lyricsEditor").value = data.content || "";
+        lastCommittedLyricsText = data.content || "";
         parseLrcData(data.content || "");
         lyricsRevisionHistoryByAudio[selectedAudioFilename] = [];
         lyricsRevisionCursorByAudio[selectedAudioFilename] = 0;
@@ -1770,14 +2368,15 @@
         }
       }
 
-      async function autoCorrectWordTiming() {
+      async function autoCorrectWordTiming(mode = "major") {
         if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
         const fd = new FormData();
         fd.append("audio_filename", selectedAudioFilename);
         fd.append("whisper_model", document.getElementById("whisperModel").value || "medium");
         fd.append("whisper_device", document.getElementById("whisperDevice").value || "auto");
+        fd.append("timing_mode", mode === "minor" ? "minor" : "major");
 
-        setStatus("Queuing AI word timing correction...");
+        setStatus(`Queuing ${mode === "minor" ? "minor" : "major"} AI timing correction...`);
         const res = await fetch("/api/auto-correct-word-timing", { method: "POST", body: fd });
         const data = await res.json();
         setStatus(data.message || (res.ok ? "AI word timing job queued." : "AI word timing failed to queue."), !res.ok);
@@ -1801,6 +2400,7 @@
         const fd = new FormData(); fd.append("filename", selectedLrcFilename); fd.append("content", text);
         const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
         const data = await res.json();
+        if (res.ok) lastCommittedLyricsText = text;
 
         if (Number.isFinite(keepTime)) {
           const dur = Number.isFinite(audio.duration) ? Number(audio.duration) : 0;
@@ -1828,7 +2428,7 @@
         const fd = new FormData();
         fd.append("audio_filename", selectedAudioFilename);
         fd.append("provider", provider);
-        setStatus(`Queuing lyrics grab via ${provider}...`);
+        setStatus(`Queuing lyrics Pull via ${provider}...`);
         const res = await fetch("/api/auto-grab-lyrics", { method: "POST", body: fd });
         const data = await res.json();
         if (res.ok) {
@@ -1849,12 +2449,15 @@
         if (res.ok) await loadJobs();
       }
 
-      async function startRender(usePreview) {
+      async function startRender(renderSource = "final") {
         if (!selectedAudioFilename) return;
+        const usePreview = renderSource === "preview";
         const cfg = (usePreview || previewConfigLocked) && previewConfigSnapshot ? previewConfigSnapshot : capturePreviewConfig();
         const fd = new FormData();
         Object.keys(cfg).forEach((k) => fd.append(k, cfg[k]));
         fd.append("use_preview_audio", usePreview ? "1" : "0");
+        fd.append("render_source", renderSource);
+        setStatus(`Queuing ${renderSource} render...`);
         const res = await fetch("/api/burn-video", { method: "POST", body: fd });
         const data = await res.json();
         setStatus(data.message || (res.ok ? "Render Queued" : "Render failed"), !res.ok);
@@ -1906,7 +2509,7 @@
       // CLAMPED MATH: Prevents negative values from causing the whole screen to disappear
       // FIXED MATH: Scales perfectly 0 to 1 based on the Speed Dropdown
       function applyTransition(p, style) {
-        let alpha = 1, scale = 1, yOff = 0, blur = 0;
+        let alpha = 1, scale = 1, yOff = 0, blur = 0, rotation = 0;
         let pClamped = Math.max(0, Math.min(1, p));
 
         if (style === "fade") alpha = pClamped;
@@ -1915,8 +2518,13 @@
         else if (style === "zoom") { scale = 0.8 + (pClamped * 0.2); alpha = pClamped; }
         else if (style === "drop") { yOff = (1 - pClamped) * -40; alpha = pClamped; }
         else if (style === "blur") { blur = (1 - pClamped) * 10; alpha = pClamped; }
+        else if (style === "bouncing-ball") { yOff = Math.sin(pClamped * Math.PI) * -24; scale = 1 + (Math.sin(pClamped * Math.PI) * 0.08); }
+        else if (style === "rotate-360") { rotation = (1 - pClamped) * Math.PI * 2; alpha = Math.min(1, pClamped * 1.2); }
+        else if (style === "glimmer") { alpha = 0.72 + (Math.sin(pClamped * Math.PI * 3) * 0.28); scale = 1 + (Math.sin(pClamped * Math.PI) * 0.03); }
+        else if (style === "shake") { yOff = Math.sin(pClamped * Math.PI * 8) * 8; }
+        else if (style === "flip") { scale = Math.max(0.05, Math.abs(Math.cos(pClamped * Math.PI))); }
 
-        return { alpha, scale, yOff, blur };
+        return { alpha, scale, yOff, blur, rotation };
       }
       function applyTextEffect(effect, pColor, sColor) {
         ctx.shadowBlur = 0; ctx.shadowColor = "transparent"; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
@@ -2008,7 +2616,15 @@
             }
 
             // FIXED: Added `start` to the payload so animations can calculate absolute entrance times
-            currLine.push({ text: token.text, active: isActive, progress: isActive ? prog : (isPast ? 1 : 0), start: token.start });
+            currLine.push({
+              text: token.text,
+              active: isActive,
+              progress: isActive ? prog : (isPast ? 1 : 0),
+              start: token.start,
+              end: token.end,
+              isManual: !!token.isManual,
+              idx: token.idx,
+            });
             currW += (currLine.length === 1 ? tw : spaceW + tw);
         });
 
@@ -2041,18 +2657,7 @@
         });
       }
 
-      function togglePlayback() {
-        if (!audio.src) { alert("Select media first."); return; }
-        if (audio.paused) {
-          if (previewShouldStartAtZero || audio.ended || Number(audio.currentTime || 0) < 0.08) {
-            audio.currentTime = 0;
-            previewShouldStartAtZero = false;
-          }
-          audio.play(); document.getElementById("playBtn").textContent = "Pause"; renderLoop();
-        } else {
-          audio.pause(); document.getElementById("playBtn").textContent = "Play";
-        }
-      }
+
 
       function onAudioLoaded() {
         if (previewShouldStartAtZero) {
@@ -2064,13 +2669,17 @@
         displayTimeTracker();
         updatePreview();
       }
-      function onAudioTimeUpdate() { syncSeekBar(); displayTimeTracker(); }
+
+
+
+
+
       function onSeekBarInput() { isSeekingPreview = true; seekPreviewToSlider(); }
       function onSeekBarCommit() { seekPreviewToSlider(); isSeekingPreview = false; }
       function seekPreviewToSlider() {
         const dur = Number.isFinite(audio.duration) ? audio.duration : 0;
         if (dur > 0) audio.currentTime = dur * (Number(document.getElementById("seekBar").value || 0) / 1000);
-        displayTimeTracker(); updatePreview();
+        syncPlaybackUi();
       }
       function syncSeekBar() {
         if (isSeekingPreview) return;
@@ -2083,46 +2692,169 @@
         document.getElementById("timeDisplay").textContent = `${fm(audio.currentTime || 0)} / ${fm(Number.isFinite(audio.duration) ? audio.duration : 0)}`;
       }
 
+      function syncPlaybackUi() {
+        syncSeekBar();
+        displayTimeTracker();
+        updateManualTimingHud();
+        updatePreview();
+        drawVocalWaveform();
+      }
+
+      function skipPreview(seconds) {
+        if (!audio.src || !Number.isFinite(audio.duration)) return;
+        audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + seconds));
+        syncPlaybackUi();
+      }
+
       function updatePreview() { drawFrame(audio.currentTime || 0); }
       function renderLoop() { if (!audio.paused) { drawFrame(audio.currentTime || 0); requestAnimationFrame(renderLoop); } }
 
       let smoothScrollY = 0; // State variable for Continuous Scroll Mode
 
-      function drawFrame(time) {
-        const w = canvas.width || previewWidth || 1280;
-        const h = canvas.height || previewHeight || 720;
+     function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX) {
+      const spaceW = ctx.measureText(" ").width + wordPad;
+      const cx = Number.isFinite(centerX) ? centerX : (canvas.width / 2);
+
+      // NEW: Get the exact current audio time directly for our 'F' key override logic
+      const audioEl = document.getElementById("previewAudio");
+      const currentTime = audioEl ? audioEl.currentTime : 0;
+
+      let x = cx - tokens.reduce((s, t, i) => s + ctx.measureText(t.text).width + (i > 0 ? spaceW : 0), 0) / 2;
+      const positions = [];
+
+      tokens.forEach((t, i) => {
+          if (i > 0) x += spaceW;
+          const tw = ctx.measureText(t.text).width;
+          positions.push({ x: x + (tw / 2), width: tw });
+          const wordFx = activeFxScope === "word" && activeTransitionStyle !== "none" && Number.isFinite(t.start);
+          if (wordFx) {
+            const wordProgress = Math.max(0, Math.min(1, (currentTime - t.start) / Math.max(0.05, activeFxSpeed)));
+            const wordTransition = applyTransition(wordProgress, activeTransitionStyle);
+            ctx.save();
+            ctx.globalAlpha = wordTransition.alpha;
+            ctx.translate(x + (tw / 2), y + wordTransition.yOff);
+            ctx.scale(wordTransition.scale, wordTransition.scale);
+            ctx.rotate(wordTransition.rotation || 0);
+            ctx.translate(-(x + (tw / 2)), -y);
+            if (wordTransition.blur > 0) ctx.filter = `blur(${wordTransition.blur}px)`;
+          }
+          ctx.strokeStyle = oColor;
+          ctx.strokeText(t.text, x, y);
+
+          // NEW: Check if 'F' was pressed (t.end exists) and we are past that time.
+          // If so, force the word to be 100% complete!
+          let currentProgress = t.progress || 0;
+          if (t.end !== undefined && currentTime >= t.end) {
+              currentProgress = 1.0;
+          }
+
+          // NEW: Use our currentProgress override instead of just checking t.active
+          if (t.active || (currentProgress > 0 && currentProgress < 1)) {
+              // NEW: Use currentProgress for the math instead of t.progress
+              const split = Math.max(0, Math.min(t.text.length, Math.floor(t.text.length * currentProgress)));
+              const left = t.text.slice(0, split);
+              const right = t.text.slice(split);
+              const lw = ctx.measureText(left).width;
+
+              ctx.fillStyle = pColor;
+              ctx.fillText(left, x, y);
+
+              ctx.fillStyle = sColor;
+              ctx.fillText(right, x + lw, y);
+
+          } else if (currentProgress >= 1) { // NEW: Use currentProgress
+              ctx.fillStyle = pColor;
+              ctx.fillText(t.text, x, y);
+          } else {
+              ctx.fillStyle = sColor;
+              ctx.fillText(t.text, x, y);
+          }
+          x += tw;
+            if (wordFx) ctx.restore();
+      });
+          if (activeTransitionStyle === "bouncing-ball" && activeFxScope !== "word" && positions.length) {
+          const activeIndex = tokens.findIndex((token) => token.isManual
+            ? token.idx === manualTimingState.cursor
+            : token.active);
+          const lastFinished = tokens.reduce((last, token, index) => token.progress >= 1 ? index : last, -1);
+          const targetIndex = activeIndex >= 0 ? activeIndex : lastFinished;
+          if (targetIndex >= 0) {
+            const target = positions[targetIndex].x;
+              const previous = positions[lastFinished >= 0 ? lastFinished : targetIndex].x;
+            const targetToken = tokens[targetIndex];
+            const targetStart = targetToken.isManual
+              ? (manualTimingState.activeStart ?? currentTime)
+              : (Number.isFinite(targetToken.start) ? targetToken.start : currentTime);
+            const flightProgress = activeIndex >= 0
+              ? Math.max(0, Math.min(1, (currentTime - targetStart) / 0.32))
+              : 1;
+            const ballX = previous + ((target - previous) * flightProgress);
+            const arc = Math.sin(flightProgress * Math.PI) * 28;
+            const idleBounce = activeIndex < 0 ? Math.abs(Math.sin(currentTime * Math.PI * 2.4)) * 10 : 0;
+              const priority = activeIndex >= 0 ? 2 : 1;
+              if (!bouncingBallCandidate || priority >= bouncingBallCandidate.priority) {
+                bouncingBallCandidate = { x: ballX, y: y - 30 - arc - idleBounce, color: pColor, priority };
+              }
+          }
+        }
+  }
+
+    function updatePreview() {
+        // Uses your existing audio variable, or grabs it if undefined
+        const audioEl = typeof audio !== 'undefined' ? audio : document.getElementById("previewAudio");
+        drawFrame(audioEl ? audioEl.currentTime || 0 : 0);
+    }
+
+    function drawFrame(time) {
+      const w = Math.max(320, Number(previewWidth) || 1280);
+      const h = Math.max(180, Number(previewHeight) || 720);
+
+      // Scale all lyric measurements from the 1920x1080 design baseline.
+      const layoutScale = Math.min(w / 1920, h / 1080);
+
         const cx = Math.round(w / 2);
         const cy = Math.round(h / 2);
-        const layoutScale = Math.max(0.45, Math.min(1.15, Math.min(w / 1920, h / 1080)));
+
         ctx.clearRect(0, 0, w, h);
         const bgType = document.getElementById("bgType").value;
         const bgCol = document.getElementById("bgColor").value;
         const primCol = document.getElementById("primaryColor").value;
 
-        const hasPreviewMedia = !!(selectedAudioFilename && audio.src);
+        const hasPreviewMedia = !!(typeof selectedAudioFilename !== 'undefined' && selectedAudioFilename && audio && audio.src);
+
         if (!hasPreviewMedia) {
-          const placeholder = ensureKaraokePlaceholderImage();
-          if (placeholder && placeholder.complete) {
-            ctx.drawImage(placeholder, 0, 0, w, h);
-          } else {
-            let fallback = ctx.createLinearGradient(0, 0, w, h);
-            fallback.addColorStop(0, "#1f005c");
-            fallback.addColorStop(0.55, "#ff6b6b");
-            fallback.addColorStop(1, "#ffd166");
-            ctx.fillStyle = fallback;
-            ctx.fillRect(0, 0, w, h);
-          }
-        } else if (bgType === "image" && bgImageObj) {
-          ctx.drawImage(bgImageObj, 0, 0, w, h);
+            // Note: ensureKaraokePlaceholderImage() must exist elsewhere in your code
+            const placeholder = typeof ensureKaraokePlaceholderImage === 'function' ? ensureKaraokePlaceholderImage() : null;
+
+            if (placeholder && placeholder.complete) {
+                ctx.drawImage(placeholder, 0, 0, w, h);
+            } else {
+                let fallback = ctx.createLinearGradient(0, 0, w, h);
+                fallback.addColorStop(0, "#1f005c");
+                fallback.addColorStop(0.55, "#ff6b6b");
+                fallback.addColorStop(1, "#ffd166");
+                ctx.fillStyle = fallback;
+                ctx.fillRect(0, 0, w, h);
+            }
+        } else if (bgType === "image" && typeof bgImageObj !== 'undefined' && bgImageObj) {
+            ctx.drawImage(bgImageObj, 0, 0, w, h);
         } else if (bgType === "gradient") {
-          let grd = ctx.createLinearGradient(0, 0, w, h);
-          grd.addColorStop(0, bgCol); grd.addColorStop(1, document.getElementById("outlineColor").value);
-          ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
+            let grd = ctx.createLinearGradient(0, 0, w, h);
+            grd.addColorStop(0, bgCol);
+            grd.addColorStop(1, document.getElementById("outlineColor").value);
+            ctx.fillStyle = grd;
+            ctx.fillRect(0, 0, w, h);
         } else if (bgType === "spiral") {
-          let grd = ctx.createRadialGradient(cx, cy, Math.max(30, h * 0.05), cx, cy, Math.max(w, h) * 0.75);
-          grd.addColorStop(0, bgCol); grd.addColorStop(0.5, primCol); grd.addColorStop(1, bgCol);
-          ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
-        } else { ctx.fillStyle = bgCol; ctx.fillRect(0, 0, w, h); }
+            let grd = ctx.createRadialGradient(cx, cy, Math.max(30, h * 0.05), cx, cy, Math.max(w, h) * 0.75);
+            grd.addColorStop(0, bgCol);
+            grd.addColorStop(0.5, primCol);
+            grd.addColorStop(1, bgCol);
+            ctx.fillStyle = grd;
+            ctx.fillRect(0, 0, w, h);
+        } else {
+            ctx.fillStyle = bgCol;
+            ctx.fillRect(0, 0, w, h);
+        }
 
         const fName = document.getElementById("fontSelect").value || "Arial";
         const fSize = parseInt(document.getElementById("fontSize").value, 10) || 130;
@@ -2140,6 +2872,10 @@
         // New FX modifiers
         const fxScope = document.getElementById("fxScope") ? document.getElementById("fxScope").value : "page";
         const fxSpeed = parseFloat(document.getElementById("fxSpeed") ? document.getElementById("fxSpeed").value : "0.6");
+        activeFxScope = fxScope;
+        activeTransitionStyle = tStyle;
+        activeFxSpeed = Math.max(0.05, fxSpeed || 0.6);
+        bouncingBallCandidate = null;
 
         ctx.font = `bold ${scaledFontSize}px ${fName}`;
         const horizontalPadding = Math.max(90, Math.round(w * 0.08));
@@ -2147,7 +2883,7 @@
         const lHeight = Math.round(scaledFontSize * 1.1);
 
         const allLines = buildStableLines(time, maxW, wordPad);
-        const reqVisible = parseInt(document.getElementById("previewLineCount").value, 10);
+        const reqVisible = Math.max(1, Math.min(4, parseInt(document.getElementById("previewLineCount").value, 10) || 3));
         const revealMode = document.getElementById("revealMode").value || "block";
 
         let activeIdx = 0;
@@ -2176,8 +2912,9 @@
           let targetScrollY = activeIdx * (lHeight + lineGap);
           smoothScrollY += (targetScrollY - smoothScrollY) * 0.08; // Interpolated Smooth Lerp
 
-          startIdx = Math.max(0, activeIdx - 5);
-          const endIdx = Math.min(allLines.length, activeIdx + 5);
+          const visibleBefore = Math.floor((reqVisible - 1) / 2);
+          startIdx = Math.max(0, activeIdx - visibleBefore);
+          const endIdx = Math.min(allLines.length, startIdx + reqVisible);
           linesToDraw = allLines.slice(startIdx, endIdx);
 
           bTop = cy - smoothScrollY + (startIdx * (lHeight + lineGap)) - Math.round(lHeight/2);
@@ -2209,12 +2946,12 @@
             ctx.save();
             ctx.globalAlpha = tr.alpha;
             if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
-            ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.translate(-cx, -cy);
+            ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -cy);
 
             linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx));
             ctx.restore();
 
-          } else {
+          } else if (fxScope === "line") {
             // FX SCOPE: Line Entrance Animation (or fallback for continuous)
             linesToDraw.forEach((t, i) => {
               let lineStart = time;
@@ -2229,22 +2966,35 @@
 
               let lineY = revealMode === "continuous" ? (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap)) : (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap));
 
-              ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.translate(-cx, -lineY);
+              ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -lineY);
               drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx);
               ctx.restore();
+            });
+          } else {
+            linesToDraw.forEach((line, i) => {
+              const lineY = bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap);
+              drawTokenLine(line, lineY, primary, secondary, outline, wordPad, cx);
             });
           }
         } else {
           ctx.shadowBlur = 0; ctx.fillStyle = secondary; ctx.font = `bold ${Math.max(18, Math.round(scaledFontSize * 0.5))}px ${fName}`;
           ctx.fillText("No timed lyrics loaded yet", cx - ctx.measureText("No timed lyrics loaded yet").width / 2, cy);
         }
+        if (bouncingBallCandidate) {
+          ctx.save();
+          ctx.fillStyle = bouncingBallCandidate.color;
+          ctx.beginPath();
+          ctx.arc(bouncingBallCandidate.x, bouncingBallCandidate.y, Math.max(5, ctx.lineWidth * 1.5), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       }
       onPreviewResolutionChange();
       applyControlContrastVars();
+      enablePanelDragging();
       onFontSizeChanged(); loadFonts(); loadThemes(); loadFileManifest(); loadJobs();
       jobPollTimer = window.setInterval(loadJobs, 2000);
       updatePreview(); updateManualTimingHud();
     </script>
 </body>
 </html>
-
