@@ -6,7 +6,8 @@
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 
-<img width="1076" height="738" alt="image" src="https://github.com/user-attachments/assets/584f52ac-5b62-4d43-9953-fcc6403b4a2e" />
+
+<img width="1099" height="842" alt="image" src="https://github.com/user-attachments/assets/28f39893-4e8e-42cf-816e-62fe6fdbf7b5" />
 
 **OnePage-Karaoke** is a high-performance, single-page web application that automates the creation of professional karaoke tracks. Powered by a FastAPI backend, PyTorch AI models (like Faster-Whisper for transcription), and a hardware-accelerated FFmpeg pipeline, this suite downloads, processes, and burns dynamic lyrics into media seamlessly.
 
