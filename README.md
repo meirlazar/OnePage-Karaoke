@@ -9,7 +9,87 @@
 
 <img width="1099" height="842" alt="image" src="https://github.com/user-attachments/assets/28f39893-4e8e-42cf-816e-62fe6fdbf7b5" />
 
-**OnePage-Karaoke** is a high-performance, single-page web application that automates the creation of professional karaoke tracks. Powered by a FastAPI backend, PyTorch AI models (like Faster-Whisper for transcription), and a hardware-accelerated FFmpeg pipeline, this suite downloads, processes, and burns dynamic lyrics into media seamlessly.
+## 🎉 v2.0.0 New Features (from v1.0.0)
+### Canvas & Rendering
+- 60 FPS Real-Time Preview with requestAnimationFrame rendering loop
+- Vocal Waveform Visualization with interactive zoom (↑↓) and pan (←→) controls
+- 16 Text Effect Styles (Flat, Shadow, Hard Drop, Glow, Neon, Blur, Rotate-360°, Glimmer, Shake, Flip, etc.)
+- 11 Transition Animations (Fade, Pop, Slide, Zoom, Drop, Blur, Rotate-360°, Glimmer, Shake, Flip, Bouncing Ball)
+- 3 Reveal Modes (Block, Continuous/Scrolling, Eager)
+- Advanced Background Support (Solid color, linear gradient, spiral gradient, custom image)
+- Dynamic Resolution Output (360p, 540p, 720p, 1080p with aspect ratio preservation)
+- NVENC GPU Hardware Encoding with CPU fallback
+- Per-Word Visual Effects when word-scope animations enabled
+### Audio Features
+- Volume Control (0–2x multiplier) in real-time preview
+- Pitch Shifting (0.5–1.5x) in real-time preview
+- Playback Speed Control (0.5x, 1.0x, 1.5x)
+- Chorus-Aware Stem Separation (auto-detect chorus, render with vocals restored only in chorus sections)
+- 3 Render Modes (Preview with vocals, Final instrumental, Chorus-aware instrumental)
+- Lyrics & Timing
+- Multi-Language Transcription (Auto, English, Russian, Hebrew, Spanish, French, German, Italian, Portuguese, Polish)
+- 3 Lyrics Providers (lrclib, Genius, Syncedlyrics)
+- Word-Level Timing Correction with 3 AI modes:
+- Minor (conservative, max ±2s adjustment)
+- Major (full AI re-alignment)
+- Custom (user-configurable max offset: 0.5s–15s)
+- Lyric Revision History (step backward/forward through versions)
+- Auto Word-Grouping (regroups single-word AI timings into readable phrases: 3–10 words per line)
+- Lyric Editor with Live Preview Updates
+### Project Management
+- Project Snapshots (save/load complete project state with all settings)
+- Media Vault (centralized project library with status indicators)
+- Project Status Tracking (media only, stems ready, lyrics pending, project saved)
+- Quick Load/Delete/Rename Actions for projects
+- Auto-Sync Pipeline (automatic stem separation → lyrics fetch → project creation)
+- Per-Project Organization (all assets in project-specific directories)
+### UI/UX
+- Collapsible Section System ([1] Get A Song, [2] Pull Lyrics, [3] Edit Lyrics, [4] Render)
+- 6 Built-in Themes (Catppuccin Mocha, Dracula, Gruvbox Dark, Nord, Rosé Pine, Tokyo Night)
+- Theme generator (bash script) - auto generates a random but complementary theme and adds it to the themes directory.
+- Theme System with Metadata (source credit, license, author info display)
+- Compact Control Bar (font selector, size/gap/padding sliders, color pickers, FX controls in header overlay)
+- Live Status Badges (running, completed, failed, cancelled with progress bars)
+- Debug Toolbar (syntax/runtime error detection, diagnostics, copyable debug reports)
+- Panel Dragging (rearrange UI sections with drag-and-drop)
+- Responsive Layout (adapts to mobile/tablet screens)
+### Hardware & Performance
+- Per-Task Device Allocation (choose CUDA/CPU for stem separation, transcription, rendering independently)
+- Intelligent GPU Fallback (auto-retry on CPU if CUDA fails)
+- Memory-Safe Processing (automatic CUDA cache cleanup after each job)
+- Malloc Trimming (return freed heap pages to OS)
+- IPC Collect Support (CUDA IPC resource cleanup)
+- Job Queue System with cancellation support
+### Transcription & AI
+- Faster-Whisper Integration with compute type options (int8_float16, float16, float32)
+- Whisper Model Selection (small, medium, large-v2, large-v3)
+- Multi-Compute Type Fallback (auto-retry with different quantization levels)
+- VAD (Voice Activity Detection) filtering
+- Word-Timestamp Precision from Faster-Whisper
+- Initial Prompt Support (seed transcription with song title/artist for better accuracy)
+### File & Asset Management
+- Identity-Based Media Naming (FFProbe metadata extraction for artist/title)
+- URL Download Engines (yt-dlp or MeTube dual support with smart fallback)
+- Media File Validation (supported formats: MP3, WAV, M4A, FLAC, OGG, AAC, WEBM, MP4)
+- Automatic Project Layout (moves loose media into organized project folders)
+- ASS Subtitle Generation (Advanced Substation Alpha format with full styling)
+- Custom Font Serving (fc-cache integration for automatic font discovery)
+### Accessibility & Logging
+- Detailed Job Diagnostics (error file, line, column, trace information)
+- Exception Location Tracking (workspace-relative file paths in error reports)
+- Python Syntax Validation (real-time syntax issue detection)
+- Runtime Error Tracking (last 12 failed jobs captured for diagnostics)
+- Comprehensive Logging (job queue, worker, render, transcription, resource cleanup logs)
+### Advanced Features
+- Bouncing Ball Animation (animated character hops word-to-word during playback)
+- Word-Grouped Lyric Regrouping (configurable ASS_WORD_GROUP_SIZE and max gap)
+- Per-Word Karaoke Tags (ASS \k timing codes for smooth color transitions)
+- Layer-Based Subtitle Rendering (text, upcoming, effect layers)
+- Dynamic Positioning (centered, scrolling, fixed positioning modes)
+- Gradient & Spiral Effects (geq FFmpeg filters for animated backgrounds)
+
+
+## **OnePage-Karaoke** is a high-performance, single-page web application that automates the creation of professional karaoke tracks. Powered by a FastAPI backend, PyTorch AI models (like Faster-Whisper for transcription), and a hardware-accelerated FFmpeg pipeline, this suite downloads, processes, and burns dynamic lyrics into media seamlessly.
 
 ## ✨ Core Features
 
