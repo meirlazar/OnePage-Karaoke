@@ -75,6 +75,28 @@ contrast_text() {
   '
 }
 
+contrast_ratio() {
+  local first="${1#\#}" second="${2#\#}"
+  local r1=$((16#${first:0:2})) g1=$((16#${first:2:2})) b1=$((16#${first:4:2}))
+  local r2=$((16#${second:0:2})) g2=$((16#${second:2:2})) b2=$((16#${second:4:2}))
+  awk -v r1="$r1" -v g1="$g1" -v b1="$b1" -v r2="$r2" -v g2="$g2" -v b2="$b2" '
+    function channel(v) { v /= 255; return v <= 0.04045 ? v / 12.92 : exp(2.4 * log((v + 0.055) / 1.055)) }
+    function luminance(r, g, b) { return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b) }
+    BEGIN { a = luminance(r1, g1, b1); b = luminance(r2, g2, b2); printf "%.6f\n", (a > b ? a + 0.05 : b + 0.05) / (a > b ? b + 0.05 : a + 0.05) }
+  '
+}
+
+ensure_contrast() {
+  local foreground="$1" background="$2" minimum="$3"
+  local ratio
+  ratio=$(contrast_ratio "$foreground" "$background")
+  if awk -v ratio="$ratio" -v minimum="$minimum" 'BEGIN { exit !(ratio >= minimum) }'; then
+    printf '%s\n' "$foreground"
+  else
+    contrast_text "$background"
+  fi
+}
+
 # 3. GENERATION LOGIC
 generate_theme() {
   local noun="${NOUNS[$((RANDOM % ${#NOUNS[@]}))]}"
@@ -97,17 +119,19 @@ generate_theme() {
   esac
 
   local bg_l bg_s text_l text_m_l accent_s structural_s canvas_l border_l
-  local surface_l panel_l control_l overlay_l accent_l
+  local surface_l panel_l control_l overlay_l accent_l waveform_l waveform_divider_l waveform_playhead_l
 
   if [[ $mode -eq 0 || $mode -eq 1 ]]; then
     bg_l=$((6 + RANDOM % 5)); surface_l=$((14 + RANDOM % 5)); panel_l=$((11 + RANDOM % 5))
     control_l=$((18 + RANDOM % 6)); overlay_l=$((4 + RANDOM % 4)); canvas_l=$((2 + RANDOM % 4))
     text_l=91; text_m_l=66; border_l=30; accent_l=64
+    waveform_l=$((72 + RANDOM % 12)); waveform_divider_l=76; waveform_playhead_l=68
     [[ $mode -eq 0 ]] && { bg_s=10; structural_s=14; accent_s=58; } || { bg_s=22; structural_s=28; accent_s=84; }
   else
     bg_l=$((95 - RANDOM % 3)); surface_l=$((88 - RANDOM % 4)); panel_l=$((91 - RANDOM % 4))
     control_l=$((84 - RANDOM % 4)); overlay_l=$((97 - RANDOM % 2)); canvas_l=$((98 - RANDOM % 2))
     text_l=12; text_m_l=38; border_l=70; accent_l=42
+    waveform_l=$((20 + RANDOM % 12)); waveform_divider_l=24; waveform_playhead_l=30
     [[ $mode -eq 2 ]] && { bg_s=9; structural_s=15; accent_s=58; } || { bg_s=18; structural_s=25; accent_s=82; }
   fi
 
@@ -127,6 +151,9 @@ generate_theme() {
   local accent=$(hsl_to_hex "$accent_h" "$accent_s" "$accent_l")
   local accent_hover=$(hsl_to_hex "$secondary_h" "$accent_s" $((mode < 2 ? 72 : 34)))
   local button_fg=$(contrast_text "$accent")
+  local waveform_accent=$(ensure_contrast "$(hsl_to_hex "$accent_h" 92 "$waveform_l")" "$control_bg" 3)
+  local waveform_divider=$(ensure_contrast "$(hsl_to_hex "$control_h" 12 "$waveform_divider_l")" "$control_bg" 2)
+  local waveform_playhead=$(ensure_contrast "$(hsl_to_hex 350 88 "$waveform_playhead_l")" "$control_bg" 3)
 
   # Status
   local success=$(hsl_to_hex 130 "$accent_s" $((mode < 2 ? 60 : 40)))
@@ -168,6 +195,9 @@ generate_theme() {
     "ink": "${ink}",
     "canvas-bg": "${canvas_bg}",
     "playhead": "${danger}",
+    "waveform-accent": "${waveform_accent}",
+    "waveform-divider": "${waveform_divider}",
+    "waveform-playhead": "${waveform_playhead}",
     "shadow": "${ink}",
     "overlay-bg": "${overlay_bg}",
     "divider": "${border}",

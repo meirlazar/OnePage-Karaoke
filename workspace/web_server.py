@@ -12,13 +12,17 @@ import logging
 import json
 import html
 import traceback
+import tempfile
+import zipfile
+import concurrent.futures
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse
 import requests
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="AI Audio Video Production Suite")
@@ -49,6 +53,10 @@ JOB_LOCK = threading.Lock()
 JOB_QUEUE = []
 JOBS = {}
 RUNNING_PROCESSES = {}
+RENAME_LOCK = threading.RLock()
+PENDING_PROJECT_RENAMES: dict[str, str] = {}
+# While the user is hand-timing lyrics, pause automatic ingest/lyrics jobs until this epoch.
+TIMING_MODE_UNTIL = 0.0
 SUPPORTED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".webm", ".mp4"}
 METUBE_URL = "http://metube:8081"
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "/usr/bin/ffmpeg")
@@ -92,6 +100,8 @@ _TITLE_JUNK = re.compile(
     r"official\s+\w+\s+video|4k|full)[\)\]]",
     re.IGNORECASE,
 )
+# Optional per-word end tag, e.g. [00:12.34]word<00:12.90>, used for finish-and-hold timing.
+_WORD_END_TAG_RE = re.compile(r"<\d{1,3}:\d{1,2}(?:\.\d{1,3})?>")
 
 
 class JobCancelledError(RuntimeError):
@@ -145,6 +155,13 @@ async def _cleanup_after_every_request(request, call_next):
 
 
 def _job_view(job: dict) -> dict:
+    queue_position = 0
+    if job.get("status") == "queued":
+        queued_ids = [job_id for job_id in JOB_QUEUE if JOBS.get(job_id, {}).get("status") == "queued"]
+        try:
+            queue_position = queued_ids.index(job["id"]) + 1
+        except ValueError:
+            queue_position = 0
     return {
         "id": job["id"],
         "type": job["type"],
@@ -152,6 +169,7 @@ def _job_view(job: dict) -> dict:
         "stage": job.get("stage", ""),
         "label": job["label"],
         "status": job["status"],
+        "queue_position": queue_position,
         "progress": job["progress"],
         "message": job["message"],
         "created_at": job["created_at"],
@@ -448,6 +466,20 @@ def _probe_media_tags(path: Path) -> tuple[str, str]:
         return "", ""
 
 
+def _probe_media_duration(path: Path) -> float:
+    ffprobe_bin = os.environ.get("FFPROBE_BIN", "/usr/bin/ffprobe")
+    try:
+        res = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return max(0.0, float((res.stdout or "0").strip())) if res.returncode == 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 def _derive_media_identity(
     *,
     path: Path | None = None,
@@ -629,6 +661,27 @@ def _refresh_font_cache() -> list[dict]:
     return sorted(deduped, key=lambda item: item["name"].lower())
 
 
+def _resolve_render_font_family(font_name: str) -> str:
+    """Resolve the browser-facing filename stem to the font's embedded family name."""
+    requested = str(font_name or "Arial").strip()
+    for font_path in SERVED_FONTS_DIR.iterdir():
+        if font_path.stem.lower() != requested.lower() or not font_path.is_file():
+            continue
+        try:
+            probe = subprocess.run(
+                ["fc-scan", "--format=%{family}", str(font_path)],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            family = (probe.stdout or "").splitlines()[0].strip()
+            if family:
+                return family
+        except (OSError, subprocess.SubprocessError):
+            break
+    return requested
+
+
 def _update_job(job_id: str, **updates) -> dict | None:
     with JOB_LOCK:
         job = JOBS.get(job_id)
@@ -770,47 +823,50 @@ def _has_active_job_for_audio(rel_audio: str, project_name: str = "") -> bool:
 
 
 def _enqueue_job(kind: str, label: str, runner: str, *, section: str = "general", stage: str = "", target_key: str = "", details: str = "", **kwargs) -> dict:
-    with JOB_LOCK:
-        if target_key:
-            existing = _find_active_job_by_key(target_key)
-            if existing:
-                return _job_view(existing)
+    # A pending rename holds this lock through the filesystem move, so jobs
+    # either keep using the original directory or start after its final name.
+    with RENAME_LOCK:
+        with JOB_LOCK:
+            if target_key:
+                existing = _find_active_job_by_key(target_key)
+                if existing:
+                    return _job_view(existing)
 
-        job_id = uuid.uuid4().hex
-        job = {
-            "id": job_id,
-            "type": kind,
-            "label": label,
-            "section": section,
-            "stage": stage,
-            "status": "queued",
-            "progress": 0,
-            "message": "Queued",
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "cancel_requested": False,
-            "runner": runner,
-            "runner_kwargs": kwargs,
-            "target_key": target_key,
-            "audio_filename": kwargs.get("audio_filename", ""),
-            "project_name": kwargs.get("project_name", ""),
-            "device": kwargs.get("device", ""),
-            "stem_device": kwargs.get("stem_device", ""),
-            "whisper_device": kwargs.get("whisper_device", ""),
-            "render_device": kwargs.get("render_device", ""),
-            "whisper_model": kwargs.get("whisper_model", ""),
-            "timing_mode": kwargs.get("timing_mode", ""),
-            "max_offset_seconds": kwargs.get("max_offset_seconds", 0),
-            "transcription_language": kwargs.get("transcription_language", ""),
-            "pitch": kwargs.get("pitch", 1),
-            "volume": kwargs.get("volume", 1),
-            "details": details,
-            "output_filename": kwargs.get("output_filename", ""),
-        }
-        JOBS[job_id] = job
-        JOB_QUEUE.append(job_id)
-        logger.info("[QUEUE] queued job=%s type=%s runner=%s section=%s stage=%s target=%s", job_id, kind, runner, section, stage, target_key or "-")
-        return _job_view(job)
+            job_id = uuid.uuid4().hex
+            job = {
+                "id": job_id,
+                "type": kind,
+                "label": label,
+                "section": section,
+                "stage": stage,
+                "status": "queued",
+                "progress": 0,
+                "message": "Queued",
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "cancel_requested": False,
+                "runner": runner,
+                "runner_kwargs": kwargs,
+                "target_key": target_key,
+                "audio_filename": kwargs.get("audio_filename", ""),
+                "project_name": kwargs.get("project_name", ""),
+                "device": kwargs.get("device", ""),
+                "stem_device": kwargs.get("stem_device", ""),
+                "whisper_device": kwargs.get("whisper_device", ""),
+                "render_device": kwargs.get("render_device", ""),
+                "whisper_model": kwargs.get("whisper_model", ""),
+                "timing_mode": kwargs.get("timing_mode", ""),
+                "max_offset_seconds": kwargs.get("max_offset_seconds", 0),
+                "transcription_language": kwargs.get("transcription_language", ""),
+                "pitch": kwargs.get("pitch", 1),
+                "volume": kwargs.get("volume", 1),
+                "details": details,
+                "output_filename": kwargs.get("output_filename", ""),
+            }
+            JOBS[job_id] = job
+            JOB_QUEUE.append(job_id)
+            logger.info("[QUEUE] queued job=%s type=%s runner=%s section=%s stage=%s target=%s", job_id, kind, runner, section, stage, target_key or "-")
+            return _job_view(job)
 
 
 def _check_cancel_requested(job_id: str) -> bool:
@@ -859,11 +915,38 @@ def _cancel_job(job_id: str) -> dict | None:
     return _job_view(job)
 
 
-def _run_cancellable_command(job_id: str, cmd: list[str], message: str, start_progress: int, end_progress: int) -> None:
+def _run_cancellable_command(
+    job_id: str,
+    cmd: list[str],
+    message: str,
+    start_progress: int,
+    end_progress: int,
+    total_duration: float = 0.0,
+) -> None:
     _ensure_not_cancelled(job_id)
     logger.info("[PROC START] job=%s %s | %s", job_id, message, _cmd_text(cmd))
     _update_job(job_id, status="running", message=message, progress=start_progress)
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    stderr_tail = deque(maxlen=40)
+    latest_media_time = [0.0]
+
+    def drain_stderr() -> None:
+        if not proc.stderr:
+            return
+        for line in proc.stderr:
+            stripped = line.rstrip()
+            if stripped:
+                stderr_tail.append(stripped)
+            match = re.search(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", line)
+            if match:
+                latest_media_time[0] = (
+                    float(match.group(1)) * 3600
+                    + float(match.group(2)) * 60
+                    + float(match.group(3))
+                )
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
     with JOB_LOCK:
         RUNNING_PROCESSES[job_id] = proc
     try:
@@ -875,13 +958,18 @@ def _run_cancellable_command(job_id: str, cmd: list[str], message: str, start_pr
                 _terminate_running_process(job_id)
                 raise JobCancelledError("Job cancelled")
             now = time.time()
-            # Keep UI responsive for commands that do not emit parseable progress.
-            if pulse_progress < pulse_cap and (now - last_pulse_at) >= 1.5:
+            if total_duration > 0 and latest_media_time[0] > 0:
+                ratio = min(1.0, latest_media_time[0] / total_duration)
+                measured_progress = int(start_progress + ((end_progress - start_progress) * ratio))
+                _update_job(job_id, progress=min(measured_progress, pulse_cap))
+            elif pulse_progress < pulse_cap and (now - last_pulse_at) >= 1.5:
+                # Keep UI responsive for commands that do not emit parseable progress.
                 pulse_progress += 1
                 _update_job(job_id, progress=pulse_progress)
                 last_pulse_at = now
             time.sleep(0.5)
-        stderr_output = proc.stderr.read() if proc.stderr else ""
+        stderr_thread.join(timeout=2)
+        stderr_output = "\n".join(stderr_tail)
         if proc.returncode != 0:
             logger.error("[PROC FAIL] job=%s code=%s cmd=%s\n%s", job_id, proc.returncode, _cmd_text(cmd), (stderr_output or "")[-2000:])
             raise RuntimeError((stderr_output or f"Command failed: {' '.join(cmd)}").strip()[-2000:])
@@ -977,6 +1065,60 @@ def _run_demucs_with_progress(
 
     raise RuntimeError(last_error or "Demucs separation failed")
 
+
+def _enhanced_lrc_to_word_lines(text: str) -> str:
+    """Convert A2 enhanced LRC (<mm:ss.xx> word tags) to one-word-per-line [mm:ss.xx] LRC.
+
+    Returns "" when the input has no word-level tags, so callers can fall back to
+    standard line-level fetching.
+    """
+    word_re = re.compile(r"<(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?)>\s*([^<\[\n]+)")
+    out: list[str] = []
+    for raw in str(text or "").splitlines():
+        for match in word_re.finditer(raw):
+            stamp = (int(match.group(1)) * 60) + float(match.group(2))
+            word = match.group(3).strip()
+            if word:
+                out.append(f"[{_format_lrc_timestamp(stamp)}]{word}")
+    return "\n".join(out)
+
+
+def _fetch_synced_lyrics_enhanced(term: str, out_path: Path, timeout: int | None = None) -> bool:
+    """Try to fetch word/syllable-level (enhanced) synced lyrics and store them as word-per-line LRC."""
+    tmp_path = out_path.with_name(out_path.name + ".enh")
+    run_kwargs: dict = {"capture_output": True, "text": True}
+    if timeout is not None:
+        run_kwargs["timeout"] = timeout
+    try:
+        res = subprocess.run(["syncedlyrics", term, "-o", str(tmp_path), "--enhanced"], **run_kwargs)
+        if res.returncode == 0 and tmp_path.exists():
+            raw = tmp_path.read_text(encoding="utf-8", errors="ignore")
+            converted = _enhanced_lrc_to_word_lines(raw)
+            if converted.strip():
+                out_path.write_text(converted + "\n", encoding="utf-8")
+                logger.info("[LYRICS SYNCED] enhanced word-level lyrics captured for %r", term)
+                return True
+    except Exception as exc:
+        logger.warning("[LYRICS SYNCED] enhanced fetch failed for %r: %s", term, exc)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return False
+
+
+def _run_syncedlyrics(term: str, out_path: Path, timeout: int | None = None) -> bool:
+    """Fetch synced lyrics, preferring word/syllable-level timing, falling back to line-level."""
+    if _fetch_synced_lyrics_enhanced(term, out_path, timeout=timeout):
+        return True
+    run_kwargs: dict = {"capture_output": True, "text": True}
+    if timeout is not None:
+        run_kwargs["timeout"] = timeout
+    res = subprocess.run(["syncedlyrics", term, "-o", str(out_path)], **run_kwargs)
+    return res.returncode == 0 and _has_timed_lyrics(out_path)
+
+
 def _run_audio_pipeline_job(
     job_id: str,
     audio_filename: str,
@@ -1048,8 +1190,8 @@ def _run_audio_pipeline_job(
 
         _update_job(job_id, stage="lyrics fetch", message=f"Fetching synced lyrics for {audio_path.name}", progress=demucs_end)
         _ensure_not_cancelled(job_id)
-        res = subprocess.run(["syncedlyrics", lyrics_search, "-o", str(lrc_file)], capture_output=True, text=True)
-        if res.returncode == 0 and lrc_file.exists() and lrc_file.stat().st_size >= 10:
+        synced_ok = _run_syncedlyrics(lyrics_search, lrc_file)
+        if synced_ok and lrc_file.exists() and lrc_file.stat().st_size >= 10:
             logger.info("[PIPELINE] job=%s syncedlyrics hit for %s", job_id, audio_path.name)
             if no_vocals_track and no_vocals_track.exists():
                 _update_job(job_id, stage="package chorus stem", message=f"Building chorus-aware stem for {audio_path.name}", progress=max(0, end_progress - 2))
@@ -1278,7 +1420,7 @@ def _run_render_job(
             volume,
         )
         try:
-            execute_ffmpeg_burn(
+            actual_device = execute_ffmpeg_burn(
                 audio_filename,
                 font_name,
                 font_size,
@@ -1306,8 +1448,8 @@ def _run_render_job(
                 render_width=render_width,
                 render_height=render_height,
             )
-            _update_job(job_id, render_device=attempt_device)
-            logger.info("[RENDER END] job=%s audio=%s device=%s", job_id, audio_filename, attempt_device)
+            _update_job(job_id, render_device=actual_device)
+            logger.info("[RENDER END] job=%s audio=%s device=%s", job_id, audio_filename, actual_device)
             return
         except JobCancelledError:
             raise
@@ -1329,6 +1471,7 @@ def _run_lyrics_fetch_job(
     display_title: str = "",
     provider: str = "syncedlyrics",
     project_name: str = "",
+    force: bool = False,
 ) -> None:
     audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
     rel_audio = _relative_to_output(audio_path)
@@ -1336,13 +1479,14 @@ def _run_lyrics_fetch_job(
 
     project_dir = audio_path.parent
     lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
-    if _has_timed_lyrics(lrc_file):
-        _update_job(job_id, progress=100, message=f"Lyrics already exist for {audio_path.name}")
+    # Only skip when NOT an explicit user pull; a manual "Pull Lyrics" always re-fetches.
+    if not force and _has_timed_lyrics(lrc_file):
+        _update_job(job_id, progress=100, message=f"Lyrics already exist for {audio_path.name}", status="completed")
         return
 
     selected_provider = str(provider or "syncedlyrics").strip().lower()
-    if selected_provider not in {"syncedlyrics", "lrclib", "genius"}:
-        selected_provider = "lrclib"
+    if selected_provider not in {"auto", "syncedlyrics", "lrclib", "genius"}:
+        selected_provider = "auto"
 
     _update_job(
         job_id,
@@ -1353,19 +1497,47 @@ def _run_lyrics_fetch_job(
     )
 
     _ensure_not_cancelled(job_id)
-    if selected_provider == "syncedlyrics":
+    if selected_provider == "auto":
+        identity = _derive_media_identity(path=audio_path, raw_name=display_title or audio_path.stem)
+        content, winning_provider = _fetch_best_lyrics(identity)
+        lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
+        timing_level, timestamp_count = _detect_timing_level(content)
+        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_desc = timing_names.get(timing_level, "unknown")
+        selected_provider = f"auto ({winning_provider}) - {timing_desc} ({timestamp_count} timestamps)"
+    elif selected_provider == "syncedlyrics":
         identity = _derive_media_identity(path=audio_path, raw_name=display_title or audio_path.stem)
         lookup = lyrics_query or identity["display"] or audio_path.stem
-        res = subprocess.run(["syncedlyrics", lookup, "-o", str(lrc_file)], capture_output=True, text=True)
-        if res.returncode != 0 or not _has_timed_lyrics(lrc_file):
-            raise RuntimeError((res.stderr or res.stdout or f"Lyrics fetch failed for {audio_path.name}").strip()[-2000:])
+        if not _run_syncedlyrics(lookup, lrc_file) or not _has_timed_lyrics(lrc_file):
+            raise RuntimeError(f"Lyrics fetch failed for {audio_path.name}")
+        content = lrc_file.read_text(encoding="utf-8")
+        timing_level, timestamp_count = _detect_timing_level(content)
+        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_desc = timing_names.get(timing_level, "unknown")
+        selected_provider = f"syncedlyrics - {timing_desc} ({timestamp_count} timestamps)"
     else:
         _fetch_lyrics_for_media_with_provider(audio_path, selected_provider)
         if not _has_timed_lyrics(lrc_file):
             raise RuntimeError(f"{selected_provider} did not produce timed lyrics for {audio_path.name}")
+        content = lrc_file.read_text(encoding="utf-8")
+        timing_level, timestamp_count = _detect_timing_level(content)
+        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_desc = timing_names.get(timing_level, "unknown")
+        selected_provider = f"{selected_provider} - {timing_desc} ({timestamp_count} timestamps)"
 
     _ensure_not_cancelled(job_id)
-    _update_job(job_id, progress=100, message=f"Lyrics ready via {selected_provider} for {audio_path.name}")
+    # Write metadata file to track which provider was used
+    meta_file = lrc_file.with_suffix(".lrc.meta")
+    try:
+        winning_provider_name = selected_provider.split(" ")[0] if " " in selected_provider else selected_provider
+        meta_file.write_text(
+            json.dumps({"provider": winning_provider_name, "fetched_at": time.time()}),
+            encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Could not write metadata file: {e}")
+    
+    _update_job(job_id, progress=100, message=f"Lyrics ready via {selected_provider} for {audio_path.name}", status="completed")
 
 
 def _run_word_timing_correction_job(
@@ -1424,6 +1596,9 @@ def _run_word_timing_correction_job(
 
 
 def _sync_project_jobs() -> None:
+    # Don't auto-enqueue ingest/lyrics jobs while the user is actively hand-timing.
+    if time.time() < TIMING_MODE_UNTIL:
+        return
     manifests = _list_project_manifests()
     for manifest in manifests:
         rel_audio = manifest["audio_filename"]
@@ -1493,7 +1668,9 @@ def _job_worker_loop() -> None:
 
             current = JOBS.get(job["id"], {})
             if current.get("status") == "running":
-                _update_job(job["id"], status="completed", progress=100, message="Completed")
+                # Only update status to completed; preserve any message set by job runner
+                # (e.g., "Lyrics ready via syncedlyrics - syllable-level (487 timestamps)")
+                _update_job(job["id"], status="completed", progress=100)
                 logger.info("[WORKER] completed job=%s", job["id"])
         except JobCancelledError:
             _update_job(job["id"], status="cancelled", message="Cancelled", progress=0)
@@ -1512,6 +1689,7 @@ def _job_worker_loop() -> None:
             logger.error("[WORKER] failed job=%s: %s\n%s", job["id"], exc, trace_text)
         finally:
             _release_runtime_resources(f"post job cleanup ({job.get('id', '-')})")
+            _finalize_pending_project_renames()
 
 
 def _safe_output_name(name: str, fallback_stem: str = "track") -> str:
@@ -1604,6 +1782,91 @@ def _rename_project_assets(project_dir: Path, project_name: str) -> None:
             target = project_dir / f"{project_name}_{counter}{suffix}"
             counter += 1
         path.rename(target)
+
+
+def _project_has_active_jobs(project_name: str) -> bool:
+    return any(
+        job.get("status") in {"queued", "running"}
+        and (job.get("project_name") == project_name or str(job.get("audio_filename") or "").startswith(f"{project_name}/"))
+        for job in JOBS.values()
+    )
+
+
+def _rewrite_project_references(old_project: str, new_project: str, old_rel_audio: str, new_rel_audio: str) -> None:
+    with JOB_LOCK:
+        for job in JOBS.values():
+            if job.get("audio_filename") == old_rel_audio:
+                job["audio_filename"] = new_rel_audio
+            if job.get("project_name") == old_project:
+                job["project_name"] = new_project
+            runner_kwargs = job.get("runner_kwargs")
+            if isinstance(runner_kwargs, dict):
+                if runner_kwargs.get("audio_filename") == old_rel_audio:
+                    runner_kwargs["audio_filename"] = new_rel_audio
+                if runner_kwargs.get("project_name") == old_project:
+                    runner_kwargs["project_name"] = new_project
+            target_key = job.get("target_key")
+            if isinstance(target_key, str) and target_key:
+                job["target_key"] = target_key.replace(old_rel_audio, new_rel_audio).replace(old_project, new_project)
+            for field in ("label", "message", "details"):
+                value = job.get(field)
+                if isinstance(value, str) and value:
+                    job[field] = value.replace(old_project, new_project)
+
+
+def _finalize_pending_project_renames() -> list[dict]:
+    """Move only idle projects, keeping job paths stable until every user is done."""
+    completed = []
+    with RENAME_LOCK:
+        with JOB_LOCK:
+            ready = [
+                (old_name, new_name)
+                for old_name, new_name in PENDING_PROJECT_RENAMES.items()
+                if not _project_has_active_jobs(old_name)
+            ]
+        for old_name, new_name in ready:
+            old_project = OUTPUT_DIR / old_name
+            target_project = OUTPUT_DIR / new_name
+            if not old_project.is_dir() or (target_project.exists() and target_project.resolve() != old_project.resolve()):
+                PENDING_PROJECT_RENAMES.pop(old_name, None)
+                continue
+
+            audio_candidates = sorted(
+                [path for path in old_project.iterdir() if _is_source_media(path)],
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            if not audio_candidates:
+                PENDING_PROJECT_RENAMES.pop(old_name, None)
+                logger.warning("[RENAME] skipped project=%s because it has no source media", old_name)
+                continue
+
+            old_rel_audio = _relative_to_output(audio_candidates[0])
+            if target_project.resolve() != old_project.resolve():
+                old_project.rename(target_project)
+            _rename_project_assets(target_project, target_project.name)
+
+            target_audio = next((path for path in target_project.iterdir() if _is_source_media(path)), None)
+            if not target_audio:
+                PENDING_PROJECT_RENAMES.pop(old_name, None)
+                continue
+            new_rel_audio = _relative_to_output(target_audio)
+            renamed_proj = _find_project_state(target_project)
+            if renamed_proj:
+                try:
+                    payload = json.loads(renamed_proj.read_text(encoding="utf-8"))
+                    if isinstance(payload, dict):
+                        payload["project_name"] = target_project.name
+                        payload["audio_filename"] = new_rel_audio
+                        renamed_proj.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception:
+                    logger.warning("[RENAME] could not update project state for %s", target_project.name)
+
+            _rewrite_project_references(old_name, target_project.name, old_rel_audio, new_rel_audio)
+            PENDING_PROJECT_RENAMES.pop(old_name, None)
+            completed.append({"old_project": old_name, "project_name": target_project.name, "audio_filename": new_rel_audio})
+            logger.info("[RENAME] finalized project=%s -> %s", old_name, target_project.name)
+    return completed
 
 
 def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
@@ -1774,13 +2037,16 @@ def _fetch_lyrics_for_media(audio_path: Path) -> str:
     project_dir = audio_path.parent
     lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
     identity = _derive_media_identity(path=audio_path, raw_name=audio_path.stem)
-    res = subprocess.run(["syncedlyrics", identity["display"], "-o", str(lrc_file)], capture_output=True, text=True)
-    if res.returncode != 0 or not lrc_file.exists() or lrc_file.stat().st_size < 10:
-        raise RuntimeError((res.stderr or res.stdout or "Lyrics lookup failed").strip())
+    if not _run_syncedlyrics(identity["display"], lrc_file) or not lrc_file.exists() or lrc_file.stat().st_size < 10:
+        raise RuntimeError("Lyrics lookup failed")
     return lrc_file.read_text(encoding="utf-8")
 
 
 def _plain_text_to_lrc(text: str) -> str:
+    """
+    Convert plain text lyrics to LRC format with line-level timing.
+    Used as fallback when providers return unsynced lyrics.
+    """
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
     if not lines:
         return ""
@@ -1788,7 +2054,7 @@ def _plain_text_to_lrc(text: str) -> str:
     cursor = 0.0
     for line in lines:
         out.append(f"[{_format_lrc_timestamp(cursor)}]{line}")
-        cursor += 3.5
+        cursor += 3.5  # 3.5 seconds per line default
     return "\n".join(out)
 
 
@@ -1911,7 +2177,150 @@ def _fetch_lyrics_from_genius(identity: dict) -> str:
     return _plain_text_to_lrc(merged)
 
 
+def _fetch_lyrics_from_syncedlyrics(identity: dict) -> str:
+    lookup = str(identity.get("display") or identity.get("title") or "").strip()
+    if not lookup:
+        raise RuntimeError("Missing title for syncedlyrics lookup")
+
+    output_file = tempfile.NamedTemporaryFile(prefix="onepage-lyrics-", suffix=".lrc", delete=False)
+    output_path = Path(output_file.name)
+    output_file.close()
+    try:
+        ok = _run_syncedlyrics(lookup, output_path, timeout=20)
+        content = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+        if not ok or not content.strip():
+            raise RuntimeError("syncedlyrics returned no lyrics")
+        return content
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def _detect_timing_level(content: str) -> tuple[int, int]:
+    """
+    Detect the timing level granularity of lyrics.
+    Returns: (timing_level, timestamp_count)
+    Levels:
+    - 3: Syllable-level (4+ timestamps per line on average, 20+ total)
+    - 2: Word-level (2-3 timestamps per line on average, 10+ total)
+    - 1: Line-level (1 timestamp per line on average)
+    - 0: No timing
+    """
+    lines = str(content or "").splitlines()
+    if not lines:
+        return 0, 0
+    
+    # Count timestamps per line
+    timestamps_per_line = []
+    total_timestamps = 0
+    single_word_timed_lines = 0
+    
+    for line in lines:
+        line_timestamps = len(re.findall(r"\[\d+:\d+(?:\.\d+)?\]", line))
+        if line_timestamps > 0:
+            timestamps_per_line.append(line_timestamps)
+            total_timestamps += line_timestamps
+            # A timed line carrying a single word is word/syllable-level timing.
+            text_only = _WORD_END_TAG_RE.sub("", re.sub(r"\[\d+:\d+(?:\.\d+)?\]", "", line)).strip()
+            if text_only and len(text_only.split()) == 1:
+                single_word_timed_lines += 1
+    
+    if total_timestamps == 0:
+        return 0, 0  # No timing
+    
+    avg_timestamps_per_line = total_timestamps / len(timestamps_per_line) if timestamps_per_line else 0
+
+    # One-word-per-line LRC (enhanced or manual word timing) is genuinely word-level even
+    # though each line only carries a single [mm:ss] tag.
+    if timestamps_per_line and (single_word_timed_lines / len(timestamps_per_line)) >= 0.7:
+        if total_timestamps >= 20:
+            return 3, total_timestamps  # dense word/syllable-level
+        if total_timestamps >= 8:
+            return 2, total_timestamps  # word-level
+    
+    # Check for synthetic timing (uniform 1.5s deltas)
+    all_timestamps = []
+    for minutes, seconds in re.findall(r"\[(\d+):(\d+(?:\.\d+)?)\]", str(content or "")):
+        all_timestamps.append((int(minutes) * 60) + float(seconds))
+    
+    deltas = [later - earlier for earlier, later in zip(all_timestamps, all_timestamps[1:]) if later > earlier]
+    is_synthetic = bool(deltas) and all(abs(delta - 1.5) < 0.03 for delta in deltas)
+    
+    # Detect timing level
+    if avg_timestamps_per_line >= 4 and total_timestamps >= 20 and not is_synthetic:
+        return 3, total_timestamps  # Syllable-level
+    elif avg_timestamps_per_line >= 1.5 and total_timestamps >= 10:
+        return 2, total_timestamps  # Word-level
+    elif avg_timestamps_per_line >= 0.8 and not is_synthetic:
+        return 1, total_timestamps  # Line-level
+    else:
+        return 0, total_timestamps  # Unknown or synthetic
+
+
+def _lyrics_timing_quality(content: str) -> tuple[int, int, int]:
+    """
+    Rate lyrics quality based on timing level, timestamp count, and content length.
+    Returns: (timing_level, timestamp_count, content_length)
+    Used for sorting - higher values are better.
+    """
+    timing_level, total_timestamps = _detect_timing_level(content)
+    content_length = len(str(content or ""))
+    return timing_level, total_timestamps, content_length
+
+
+def _fetch_best_lyrics(identity: dict) -> tuple[str, str]:
+    """
+    Fetch lyrics from multiple providers and select the best result.
+    Priority: Syllable-level timing > Word-level > Line-level > No timing
+    Falls back through providers if timing is not available.
+    """
+    fetchers = {
+        "lrclib": lambda: _fetch_lyrics_from_lrclib(identity),
+        "syncedlyrics": lambda: _fetch_lyrics_from_syncedlyrics(identity),
+        "genius": lambda: _fetch_lyrics_from_genius(identity),
+    }
+    provider_weight = {"lrclib": 3, "syncedlyrics": 2, "genius": 1}
+    results = []
+    errors = []
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(fetchers))
+    futures = {executor.submit(fetcher): provider for provider, fetcher in fetchers.items()}
+    try:
+        for future in concurrent.futures.as_completed(futures, timeout=25):
+            provider = futures[future]
+            try:
+                content = str(future.result() or "").strip()
+                if content:
+                    results.append((content, provider))
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
+    except concurrent.futures.TimeoutError:
+        errors.append("provider search timed out")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    if not results:
+        raise RuntimeError("No lyrics provider returned a result. " + "; ".join(errors))
+    
+    # Select best result prioritizing timing level, then provider weight
+    def score_result(item):
+        content, provider = item
+        timing_level, timestamp_count, content_length = _lyrics_timing_quality(content)
+        # Score: (timing_level, provider_weight, timestamp_count, content_length)
+        # This ensures syllable > word > line > no-timing, with provider weight as tiebreaker
+        return (timing_level, provider_weight.get(provider, 0), timestamp_count, content_length)
+    
+    content, provider = max(results, key=score_result)
+    timing_level, timestamp_count, _ = _lyrics_timing_quality(content)
+    timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+    timing_desc = timing_names.get(timing_level, "unknown")
+    logger.info("[LYRICS AUTO] selected provider=%s timing=%s count=%d", provider, timing_desc, timestamp_count)
+    return content, provider
+
+
 def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> str:
+    """
+    Fetch lyrics from a specific provider with fallback to auto-detect best timing level.
+    If the provider doesn't return timing data, falls back to other providers.
+    """
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
     lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
@@ -1921,15 +2330,29 @@ def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> st
     if selected not in {"genius", "lrclib", "syncedlyrics"}:
         selected = "lrclib"
 
-    if selected == "syncedlyrics":
-        content = _fetch_lyrics_for_media(audio_path)
-    elif selected == "lrclib":
-        content = _fetch_lyrics_from_lrclib(identity)
-    else:
-        content = _fetch_lyrics_from_genius(identity)
-
+    # Try the selected provider first
+    try:
+        if selected == "syncedlyrics":
+            content = _fetch_lyrics_for_media(audio_path)
+        elif selected == "lrclib":
+            content = _fetch_lyrics_from_lrclib(identity)
+        else:
+            content = _fetch_lyrics_from_genius(identity)
+        
+        if str(content or "").strip():
+            timing_level, timestamp_count = _detect_timing_level(content)
+            if timing_level > 0:  # Has timing data
+                lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
+                return lrc_file.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("[LYRICS PROVIDER] %s failed: %s, trying fallback", selected, e)
+    
+    # If selected provider failed or returned no timing, use auto-fetch to find best timing
+    logger.info("[LYRICS PROVIDER] Falling back to auto-detect for better timing level")
+    content, _ = _fetch_best_lyrics(identity)
+    
     if not str(content or "").strip():
-        raise RuntimeError(f"{selected} returned no lyrics")
+        raise RuntimeError(f"No lyrics with timing available from any provider")
     lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
     return lrc_file.read_text(encoding="utf-8")
 
@@ -1952,7 +2375,7 @@ def _extract_lrc_words(lrc_text: str) -> list[str]:
         stripped = raw_line.strip()
         if not stripped:
             continue
-        text = tag_regex.sub(" ", stripped).strip()
+        text = _WORD_END_TAG_RE.sub(" ", tag_regex.sub(" ", stripped)).strip()
         if not text:
             continue
         words.extend([part for part in re.split(r"\s+", text) if part])
@@ -1978,7 +2401,7 @@ def _detect_lrc_chorus_ranges(lrc_path: Path | None, min_repeats: int = 2, min_b
             + int(match.group(2))
             + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000
         )
-        text = tag_regex.sub("", stripped).strip()
+        text = _WORD_END_TAG_RE.sub("", tag_regex.sub("", stripped)).strip()
         if text:
             parsed.append((time_sec, text))
 
@@ -2074,8 +2497,28 @@ def _extract_alignment_words(json_payload: dict) -> list[dict]:
                 "word": token,
                 "norm": _normalize_word_token(token),
                 "start": float(start),
+                "end": float(item["end"]) if isinstance(item.get("end"), (int, float)) else None,
             })
-    return out
+    return _normalize_alignment_word_boundaries(out)
+
+
+def _normalize_alignment_word_boundaries(words: list[dict]) -> list[dict]:
+    """Keep generated word timings monotonic when the recognizer leaves gaps."""
+    normalized: list[dict] = []
+    previous_end = 0.0
+    for item in words:
+        word = dict(item)
+        start = max(0.0, float(word["start"]))
+        if normalized and start < previous_end:
+            start = previous_end
+        end = word.get("end")
+        if not isinstance(end, (int, float)) or float(end) <= start:
+            end = start + 0.08
+        word["start"] = start
+        word["end"] = float(end)
+        previous_end = float(end)
+        normalized.append(word)
+    return normalized
 
 
 def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: dict) -> str:
@@ -2089,7 +2532,7 @@ def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: 
 
     aligned_idx = 0
     last_time = 0.0
-    corrected_lines = []
+    resolved: list[dict] = []
 
     for lyric_word in lyric_words:
         target_norm = _normalize_word_token(lyric_word)
@@ -2109,12 +2552,26 @@ def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: 
                 aligned_idx += 1
             else:
                 last_time += 0.25
-                corrected_lines.append(f"[{_format_lrc_timestamp(last_time)}]{lyric_word}")
+                resolved.append({"word": lyric_word, "start": last_time, "end": None})
                 continue
 
-        stamp = max(last_time, float(matched["start"]))
-        last_time = stamp
-        corrected_lines.append(f"[{_format_lrc_timestamp(stamp)}]{lyric_word}")
+        start = max(last_time, float(matched["start"]))
+        end = matched.get("end")
+        end = float(end) if isinstance(end, (int, float)) and float(end) > start else None
+        last_time = end if end is not None else start
+        resolved.append({"word": lyric_word, "start": start, "end": end})
+
+    # Emit a start tag for every word plus an <end> hold marker whenever the aligned word
+    # finishes before the next word begins, so preview and render fill-and-hold identically
+    # to a hand-timed session.
+    corrected_lines = []
+    for i, cur in enumerate(resolved):
+        next_start = resolved[i + 1]["start"] if i + 1 < len(resolved) else None
+        line = f"[{_format_lrc_timestamp(cur['start'])}]{cur['word']}"
+        end = cur.get("end")
+        if end is not None and end > cur["start"] and (next_start is None or end < next_start - 0.03):
+            line += f"<{_format_lrc_timestamp(end)}>"
+        corrected_lines.append(line)
 
     return "\n".join(corrected_lines)
 
@@ -2142,7 +2599,7 @@ def _minor_adjust_lrc_timing(lrc_content: str, alignment_payload: dict, max_shif
             + int(match.group(2))
             + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000
         )
-        text = tag_regex.sub("", raw_line).strip()
+        text = _WORD_END_TAG_RE.sub("", tag_regex.sub("", raw_line)).strip()
         lyric_words = [word for word in re.split(r"\s+", text) if word]
         target_norm = _normalize_word_token(lyric_words[0]) if lyric_words else ""
         matched = None
@@ -2190,11 +2647,33 @@ def _build_audio_filter(volume: float = 1.0, pitch: float = 1.0) -> str:
 
 
 def _render_video_encoder_args(render_device: str) -> list[str]:
-    probe = subprocess.run([FFMPEG_BIN, "-hide_banner", "-encoders"], capture_output=True, text=True)
-    encoders = probe.stdout or ""
     normalized = _normalize_device(render_device, DEFAULT_RENDER_DEVICE)
-    if normalized != "cpu" and "h264_nvenc" in encoders:
-        return ["-c:v", "h264_nvenc", "-b:v", "5M"]
+    probe = subprocess.run(
+        [FFMPEG_BIN, "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+    )
+    encoders = f"{probe.stdout or ''}\n{probe.stderr or ''}"
+    if normalized != "cpu":
+        if "h264_nvenc" in encoders:
+            runtime_probe = subprocess.run(
+                [
+                    FFMPEG_BIN, "-hide_banner", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1",
+                    "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if runtime_probe.returncode == 0:
+                logger.info("[GPU CHECK] FFmpeg NVENC initialization succeeded")
+                return ["-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "5M"]
+            logger.warning(
+                "[GPU CHECK] NVENC initialization failed; using CPU encoder: %s",
+                (runtime_probe.stderr or "unknown error").strip()[-500:],
+            )
+        else:
+            logger.warning("[GPU CHECK] FFmpeg does not expose h264_nvenc; using CPU encoder")
     if "libx264" in encoders:
         return ["-c:v", "libx264", "-crf", "26"]
     if "libopenh264" in encoders:
@@ -2310,14 +2789,23 @@ def process_url(
     return {"status": "queued", "message": "Queued URL download and pipeline processing.", "job": job}
 
 
+@app.post("/api/timing-mode")
+def set_timing_mode(active: str = Form("0")):
+    # Frontend heartbeat: pause automatic ingest/lyrics jobs while hand-timing lyrics.
+    global TIMING_MODE_UNTIL
+    is_active = str(active).strip().lower() in {"1", "true", "yes", "on"}
+    TIMING_MODE_UNTIL = (time.time() + 120.0) if is_active else 0.0
+    return {"status": "ok", "active": is_active, "paused_until": TIMING_MODE_UNTIL}
+
+
 @app.post("/api/auto-grab-lyrics")
 def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrclib")):
     try:
         audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
         rel_audio = _relative_to_output(audio_path)
         provider_norm = str(provider or "lrclib").strip().lower()
-        if provider_norm not in {"lrclib", "genius", "syncedlyrics"}:
-            provider_norm = "lrclib"
+        if provider_norm not in {"auto", "lrclib", "genius", "syncedlyrics"}:
+            provider_norm = "auto"
 
         job = _enqueue_job(
             "lyrics",
@@ -2331,6 +2819,7 @@ def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrcl
             lyrics_query=audio_path.stem,
             display_title=audio_path.stem,
             provider=provider_norm,
+            force=True,
             details=f"Provider: {provider_norm}",
         )
         lrc_rel = _relative_to_output(audio_path.parent / f"{audio_path.stem}.lrc")
@@ -2387,11 +2876,15 @@ def auto_correct_word_timing(
 
     rel_audio = _relative_to_output(audio_path)
     selected_mode = str(timing_mode or "major").strip().lower()
-    if selected_mode not in {"minor", "major", "custom"}:
-        selected_mode = "major"
+    if selected_mode not in {"minor", "major", "safe-word", "custom"}:
+        selected_mode = "safe-word"
     # Clamp the user-selected max offset so a bad value can't blow out timing.
     clamped_offset = max(0.5, min(30.0, float(max_offset_seconds or 5.0)))
-    mode_label = {"minor": "Minor", "custom": f"Custom (\u00b1{clamped_offset:g}s)"}.get(selected_mode, "Major")
+    mode_label = {
+        "minor": "Minor",
+        "custom": f"Custom (\u00b1{clamped_offset:g}s)",
+        "safe-word": "Safe word-level",
+    }.get(selected_mode, "Major")
     job_kwargs = dict(
         audio_filename=rel_audio,
         project_name=audio_path.parent.name,
@@ -2474,82 +2967,33 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
         return JSONResponse(status_code=400, content={"message": "Invalid project name."})
 
     target_project = OUTPUT_DIR / proposed_project
-    if target_project.exists() and target_project.resolve() != old_project.resolve():
-        return JSONResponse(status_code=409, content={"message": f"Project already exists: {proposed_project}"})
+    with RENAME_LOCK:
+        reserved_names = set(PENDING_PROJECT_RENAMES.values()) - {PENDING_PROJECT_RENAMES.get(old_project.name)}
+        if proposed_project in reserved_names or (target_project.exists() and target_project.resolve() != old_project.resolve()):
+            return JSONResponse(status_code=409, content={"message": f"Project already exists or is being renamed to: {proposed_project}"})
+        PENDING_PROJECT_RENAMES[old_project.name] = proposed_project
+        completed = _finalize_pending_project_renames()
 
-    with JOB_LOCK:
-        related_ids = [
-            job_id for job_id, job in JOBS.items()
-            if (job.get("audio_filename") == old_rel_audio or job.get("project_name") == old_project.name)
-            and job["status"] in {"queued", "running"}
-        ]
-    for job_id in related_ids:
-        _cancel_job(job_id)
-
-    if target_project.resolve() != old_project.resolve():
-        old_project.rename(target_project)
-    else:
-        target_project = old_project
-
-    _rename_project_assets(target_project, target_project.name)
-
-    legacy_proj = target_project / f"{old_project.name}.proj.json"
-    renamed_proj = target_project / f"{target_project.name}.proj.json"
-    if legacy_proj.exists() and legacy_proj != renamed_proj and not renamed_proj.exists():
-        legacy_proj.rename(renamed_proj)
-
-    audio_candidates = sorted(
-        [path for path in target_project.iterdir() if _is_source_media(path)],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not audio_candidates:
-        return JSONResponse(status_code=500, content={"message": "Project rename succeeded but no media file was found."})
-    target_audio = audio_candidates[0]
-    new_rel_audio = _relative_to_output(target_audio)
-
-    # Keep persisted project snapshot metadata aligned with the renamed project.
-    if renamed_proj.exists() and renamed_proj.is_file():
-        try:
-            payload = json.loads(renamed_proj.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                payload["project_name"] = target_project.name
-                payload["audio_filename"] = new_rel_audio
-                renamed_proj.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
-
-    with JOB_LOCK:
-        for job in JOBS.values():
-            if job.get("audio_filename") == old_rel_audio:
-                job["audio_filename"] = new_rel_audio
-            if job.get("project_name") == old_project.name:
-                job["project_name"] = target_project.name
-
-            runner_kwargs = job.get("runner_kwargs")
-            if isinstance(runner_kwargs, dict):
-                if runner_kwargs.get("audio_filename") == old_rel_audio:
-                    runner_kwargs["audio_filename"] = new_rel_audio
-                if runner_kwargs.get("project_name") == old_project.name:
-                    runner_kwargs["project_name"] = target_project.name
-
-            target_key = job.get("target_key")
-            if isinstance(target_key, str) and target_key:
-                patched_key = target_key.replace(old_rel_audio, new_rel_audio).replace(old_project.name, target_project.name)
-                job["target_key"] = patched_key
-
-            for field in ("label", "message", "details"):
-                value = job.get(field)
-                if isinstance(value, str) and value:
-                    job[field] = value.replace(old_project.name, target_project.name)
-
+    finalized = next((item for item in completed if item["old_project"] == old_project.name), None)
+    if finalized:
+        target_audio = _resolve_output_file(finalized["audio_filename"])
+        lrc_path = _find_project_asset(target_audio.parent, ".lrc", target_audio.stem)
+        return {
+            "status": "success",
+            "message": f"Renamed project to {finalized['project_name']}.",
+            "project_name": finalized["project_name"],
+            "audio_filename": finalized["audio_filename"],
+            "lrc_filename": _relative_to_output(lrc_path) if lrc_path else "",
+            "audio_url": f"/files/{quote(finalized['audio_filename'], safe='/')}",
+            "rename_pending": False,
+        }
     return {
         "status": "success",
-        "message": f"Renamed project to {target_project.name}.",
-        "project_name": target_project.name,
-        "audio_filename": new_rel_audio,
-        "lrc_filename": _relative_to_output(_find_project_asset(target_project, ".lrc", target_audio.stem)) if _find_project_asset(target_project, ".lrc", target_audio.stem) else "",
-        "audio_url": f"/files/{quote(new_rel_audio, safe='/')}",
+        "message": f"Rename to {proposed_project} is queued and will finish after active work releases {old_project.name}.",
+        "project_name": old_project.name,
+        "audio_filename": old_rel_audio,
+        "rename_pending": True,
+        "requested_project_name": proposed_project,
     }
 
 
@@ -2604,6 +3048,19 @@ def _word_transform_ass(style: str, offset_ms: int, speed_ms: int) -> str:
         )
     if style == "flip":
         return rf"\fscx20\t({offset_ms},{end_ms},\fscx100)"
+    if style == "pulse":
+        mid = offset_ms + max(1, speed_ms // 2)
+        return rf"\fscx82\fscy82\alpha&H55&\t({offset_ms},{mid},\fscx110\fscy110\alpha&H00&)\t({mid},{end_ms},\fscx100\fscy100)"
+    if style == "sway":
+        mid = offset_ms + max(1, speed_ms // 2)
+        return rf"\frz-12\t({offset_ms},{mid},\frz10)\t({mid},{end_ms},\frz0)"
+    if style == "skew":
+        mid = offset_ms + max(1, speed_ms // 2)
+        return rf"\fax-0.45\t({offset_ms},{mid},\fax0.35)\t({mid},{end_ms},\fax0)"
+    if style == "stamp":
+        return rf"\fscx138\fscy138\bord12\alpha&HFF&\t({offset_ms},{end_ms},\fscx100\fscy100\bord5\alpha&H00&)"
+    if style == "focus":
+        return rf"\blur9\alpha&HFF&\t({offset_ms},{end_ms},\blur0\alpha&H00&)"
     return ""
 
 
@@ -2703,12 +3160,14 @@ def lrc_to_ass(
         r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
         return f"&H00{b}{g}{r}&"
 
+    requested_font_name = str(font_name or "Arial").strip()
     p_color = to_ass_color(primary_hex)
     s_color = to_ass_color(secondary_hex)
     o_color = to_ass_color(outline_hex)
     main_margin_v = 0
     next_margin_v = 0
-    spacing = max(0, int(word_padding // 2))
+    font_name = _resolve_render_font_family(requested_font_name)
+    spacing = 0
 
     default_shadow = 0
     default_outline = 5
@@ -2726,6 +3185,8 @@ def lrc_to_ass(
     render_height = max(180, int(render_height or 1080))
     layout_scale = min(render_width / 1920, render_height / 1080)
     font_size = max(12, round(int(font_size) * layout_scale))
+    # Keep ASS stroke width in step with the canvas preview's scaled lineWidth.
+    default_outline = max(2, round(font_size * 0.16))
     line_spacing = max(4, round(int(line_spacing) * layout_scale))
     line_height = max(20, round((font_size * 1.1) + line_spacing))
     center_x = round(render_width / 2)
@@ -2749,75 +3210,108 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     lines = lrc_path.read_text(encoding="utf-8", errors="ignore").split('\n')
     events = ["[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
 
-    parsed_lines = []
-    tag_regex = r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]"
+    # Parse LRC into timed segments. Supports [mm:ss(.xx)] line tags plus an optional
+    # trailing <mm:ss(.xx)> word-end tag that lets a word finish and hold during a pause.
+    line_tag_re = re.compile(r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]")
+    end_tag_re = re.compile(r"<(\d+):(\d+)(?:\.(\d{1,3}))?>")
+
+    def _tag_seconds(match) -> float:
+        return (int(match.group(1)) * 60) + int(match.group(2)) + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000.0
+
+    segments = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        tags = list(re.finditer(tag_regex, stripped))
-        if not tags:
+        line_tags = list(line_tag_re.finditer(stripped))
+        if not line_tags:
             continue
-        text = re.sub(tag_regex, "", stripped).strip()
+        end_tags = list(end_tag_re.finditer(stripped))
+        text = end_tag_re.sub("", line_tag_re.sub("", stripped)).strip()
         if not text:
             continue
-        for tag in tags:
-            mins = int(tag.group(1))
-            secs = int(tag.group(2))
-            frac = tag.group(3) or "0"
-            frac_norm = int((frac + "00")[:3])
-            total_secs = (mins * 60) + secs + (frac_norm / 1000.0)
-            parsed_lines.append((total_secs, text))
+        end_val = _tag_seconds(end_tags[-1]) if end_tags else None
+        for tag in line_tags:
+            segments.append({"start": _tag_seconds(tag), "end": end_val, "text": text})
 
-    parsed_lines.sort(key=lambda x: x[0])
-    if not parsed_lines:
-        # Fallback for plain (untimed) lyrics: create sequential synthetic timing
-        plain_lines = [line.strip() for line in lines if line.strip()]
+    segments.sort(key=lambda item: item["start"])
+    if not segments:
+        # Fallback for plain (untimed) lyrics: create sequential synthetic timing.
         cursor = 0.0
-        for entry in plain_lines:
-            parsed_lines.append((cursor, entry))
+        for line in lines:
+            plain = line.strip()
+            if not plain:
+                continue
+            segments.append({"start": cursor, "end": None, "text": plain})
             cursor += 3.5
 
-    # AI correction can generate one word per LRC line; regroup adjacent word-timed entries
-    # into phrase lines for readable multi-word subtitles in final render.
-    if len(parsed_lines) >= 8:
-        single_word_lines = sum(1 for _, text in parsed_lines if len((text or "").split()) <= 1)
-        single_ratio = single_word_lines / float(len(parsed_lines))
-        if single_ratio >= 0.70:
-            target_words = max(3, min(10, int(os.environ.get("ASS_WORD_GROUP_SIZE", "6"))))
-            max_gap = max(0.15, float(os.environ.get("ASS_WORD_GROUP_MAX_GAP_SEC", "0.9")))
-            regrouped: list[tuple[float, str]] = []
-            i = 0
-            while i < len(parsed_lines):
-                start_t = parsed_lines[i][0]
-                words: list[str] = []
-                j = i
-                while j < len(parsed_lines) and len(words) < target_words:
-                    token_time, token_text = parsed_lines[j]
-                    token = (token_text or "").strip()
-                    if not token:
-                        j += 1
-                        continue
-                    if words and (token_time - parsed_lines[j - 1][0]) > max_gap:
-                        break
-                    token_words = token.split()
-                    if words and len(token_words) > 1:
-                        break
-                    words.extend(token_words)
-                    j += 1
-                if words:
-                    regrouped.append((start_t, " ".join(words)))
-                i = max(j, i + 1)
+    # Flatten and wrap tokens exactly like buildStableLines() in the preview.
+    target_words = 8
+    max_gap = 0.8
+    horizontal_padding = max(90, round(render_width * 0.08))
+    max_text_width = max(280, render_width - (horizontal_padding * 2))
+    word_padding = max(0, round(int(word_padding) * layout_scale))
+    font_path = next(
+        (path for path in SERVED_FONTS_DIR.iterdir()
+         if path.is_file() and path.stem.lower() == requested_font_name.lower()),
+        None,
+    )
+    try:
+        from PIL import ImageFont
+        metric_font = ImageFont.truetype(str(font_path), font_size) if font_path else ImageFont.truetype(font_name, font_size)
+    except Exception:
+        metric_font = None
 
-            if regrouped and len(regrouped) < len(parsed_lines):
-                logger.info(
-                    "[ASS] regrouped one-word lines %s -> %s for %s",
-                    len(parsed_lines),
-                    len(regrouped),
-                    lrc_path.name,
-                )
-                parsed_lines = regrouped
-    logger.info("[ASS] parsed timed lyric lines=%s from %s", len(parsed_lines), lrc_path.name)
+    def _text_width(value: str) -> float:
+        if metric_font is not None:
+            try:
+                return float(metric_font.getlength(value))
+            except AttributeError:
+                return float(metric_font.getbbox(value)[2])
+        return len(value) * font_size * 0.56
+
+    tokens = []
+    for index, segment in enumerate(segments):
+        words = segment["text"].split()
+        if not words:
+            continue
+        next_start = segments[index + 1]["start"] if index + 1 < len(segments) else segment["start"] + 3.0
+        segment_end = segment["end"] if segment["end"] and segment["end"] > segment["start"] else next_start
+        per_word = max(0.02, (segment_end - segment["start"]) / len(words))
+        for word_index, word in enumerate(words):
+            start = segment["start"] + (word_index * per_word)
+            end = segment["end"] if len(words) == 1 and segment["end"] else start + per_word
+            tokens.append({
+                "word": word,
+                "start": start,
+                "end": end,
+                "is_lrc_start": word_index == 0,
+            })
+
+    display_lines = []
+    current = []
+    current_width = 0.0
+    space_width = _text_width(" ")
+    for index, token in enumerate(tokens):
+        word_width = _text_width(token["word"])
+        previous = tokens[index - 1] if index else None
+        pause_break = previous and previous["end"] is not None and token["start"] - previous["end"] > max_gap
+        line_break = (
+            current
+            and (current_width + space_width + word_width + word_padding > max_text_width
+                 or len(current) >= target_words
+                 or pause_break)
+        )
+        if line_break:
+            display_lines.append({"kind": "words", "start": current[0]["start"], "text": " ".join(item["word"] for item in current), "words": current})
+            current = []
+            current_width = 0.0
+        current.append(token)
+        current_width += word_width if len(current) == 1 else space_width + word_width + word_padding
+    if current:
+        display_lines.append({"kind": "words", "start": current[0]["start"], "text": " ".join(item["word"] for item in current), "words": current})
+
+    logger.info("[ASS] segments=%s -> display lines=%s from %s", len(segments), len(display_lines), lrc_path.name)
 
     def _format_ass_time(t: float) -> str:
         h = int(t // 3600)
@@ -2825,48 +3319,78 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
         s = t % 60
         return f"{h}:{m:02d}:{s:05.2f}"
 
-    def _karaoke_text_for_line(text: str, start_t: float, end_t: float, word_fx_style: str = "", fx_speed_ms: int = 400) -> str:
-        # Use ASS \k timing so render output visibly transitions Secondary->Primary per word.
-        words = [w for w in (text or "").split() if w]
-        if not words:
-            return text or ""
-        if len(words) <= 1:
-            fx_tag = _word_transform_ass(word_fx_style, 0, fx_speed_ms) if word_fx_style else ""
-            return ("{" + fx_tag + "}" + words[0]) if fx_tag else words[0]
+    def _resolve_word_timings(entry, line_end):
+        """Return [(word, start, end)] honoring per-word end (F) holds where present."""
+        if entry["kind"] == "line":
+            words = entry["words_text"]
+            n = max(1, len(words))
+            span = max(0.20, line_end - entry["start"])
+            per = span / n
+            return [(w, entry["start"] + k * per, entry["start"] + (k + 1) * per) for k, w in enumerate(words)]
+        raw = entry["words"]
+        n = len(raw)
+        timed = []
+        for k, item in enumerate(raw):
+            start = item["start"]
+            nxt = raw[k + 1]["start"] if k + 1 < n else line_end
+            end = item["end"]
+            if end is None or end <= start:
+                end = nxt
+            if nxt > start:
+                end = min(end, nxt)
+            timed.append((item["word"], start, end))
+        return timed
 
-        total_cs = max(20, int(round(max(0.20, end_t - start_t) * 100.0)))
-        base_cs = max(1, total_cs // len(words))
-        rem = max(0, total_cs - (base_cs * len(words)))
-        chunks = []
-        offset_ms = 0
-        for idx, word in enumerate(words):
-            word_cs = base_cs + (1 if idx < rem else 0)
-            fx_tag = _word_transform_ass(word_fx_style, offset_ms, fx_speed_ms) if word_fx_style else ""
-            chunks.append(r"{\k" + str(word_cs) + fx_tag + "}" + word)
-            offset_ms += word_cs * 10
-        return " ".join(chunks)
+    word_padding = max(0, round(int(word_padding) * layout_scale))
+
+    def _karaoke_for_display(entry, line_end, word_fx_style: str = "", fx_speed_ms: int = 400) -> str:
+        # \kf sweeps a word secondary->primary over its sung duration; a following \k on the
+        # inter-word space consumes the pause so the word stays fully filled (held) until the next word.
+        timed = _resolve_word_timings(entry, line_end)
+        if not timed:
+            return entry.get("text", "")
+        line_start = timed[0][1]
+        if len(timed) == 1:
+            word, start, end = timed[0]
+            fill_cs = max(1, int(round(max(0.02, end - start) * 100)))
+            fx_tag = _word_transform_ass(word_fx_style, 0, fx_speed_ms) if word_fx_style else ""
+            return r"{\kf" + str(fill_cs) + fx_tag + "}" + word
+        parts = []
+        prev_end = line_start
+        for idx, (word, start, end) in enumerate(timed):
+            if idx > 0:
+                gap_cs = max(1, int(round(max(0.0, start - prev_end) * 100)))
+                padding_tag = r"{\fsp" + str(word_padding) + "}" if word_padding else ""
+                reset_tag = r"{\fsp0}" if word_padding else ""
+                parts.append(r"{\k" + str(gap_cs) + "}" + padding_tag + " " + reset_tag)
+            fill_cs = max(1, int(round(max(0.02, end - start) * 100)))
+            fx_tag = _word_transform_ass(word_fx_style, int(round((start - line_start) * 1000)), fx_speed_ms) if word_fx_style else ""
+            parts.append(r"{\kf" + str(fill_cs) + fx_tag + "}" + word)
+            prev_end = end
+        return "".join(parts)
 
     # Generate ASS event blocks with transition/mode controls mapped from preview settings.
     speed_ms = max(80, min(1800, int(float(fx_speed or 0.6) * 1000)))
-    visible_lines = max(1, min(6, int(preview_line_count or 3)))
+    visible_lines = max(1, min(4, int(preview_line_count or 3)))
     show_upcoming = reveal_mode in {"block", "eager"}
     upcoming_count = (visible_lines - 1) if show_upcoming else 0
     line_height = max(30, int((font_size * 1.1) + max(0, line_spacing)))
     page_size = visible_lines if reveal_mode == "block" else 1
 
-    for i in range(len(parsed_lines)):
-        start_time = parsed_lines[i][0]
+    for i in range(len(display_lines)):
+        entry = display_lines[i]
+        start_time = entry["start"]
         # End event when the next line kicks in, or default to 5 seconds later
-        end_time = parsed_lines[i+1][0] if i+1 < len(parsed_lines) else start_time + 5.0
+        end_time = display_lines[i + 1]["start"] if i + 1 < len(display_lines) else start_time + 5.0
 
         start_str = _format_ass_time(start_time)
         end_str = _format_ass_time(end_time)
-        text = parsed_lines[i][1]
+        text = entry["text"]
         is_page_start = (i % page_size == 0)
         if fx_scope == "word" and transition_style not in {"none", ""}:
-            text_payload = _karaoke_text_for_line(text, start_time, end_time, word_fx_style=transition_style, fx_speed_ms=speed_ms)
+            text_payload = _karaoke_for_display(entry, end_time, word_fx_style=transition_style, fx_speed_ms=speed_ms)
         else:
-            text_payload = _karaoke_text_for_line(text, start_time, end_time)
+            text_payload = _karaoke_for_display(entry, end_time)
 
 
         # Inject selected render effect directives (skipped for bouncing-ball, which uses a drawn
@@ -2893,16 +3417,25 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
                 effect_mod = rf"{{\t(0,{speed_ms // 3},\frx3\fry-3)\t({speed_ms // 3},{speed_ms * 2 // 3},\frx-3\fry3)\t({speed_ms * 2 // 3},{speed_ms},\frx0\fry0)}}"
             elif transition_style == "flip":
                 effect_mod = rf"{{\fscx20\t(0,{speed_ms},\fscx100)}}"
+            elif transition_style == "pulse":
+                half_speed = max(1, speed_ms // 2)
+                effect_mod = rf"{{\fscx82\fscy82\alpha&H55&\t(0,{half_speed},\fscx110\fscy110\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)}}"
+            elif transition_style == "sway":
+                half_speed = max(1, speed_ms // 2)
+                effect_mod = rf"{{\frz-12\t(0,{half_speed},\frz10)\t({half_speed},{speed_ms},\frz0)}}"
+            elif transition_style == "skew":
+                half_speed = max(1, speed_ms // 2)
+                effect_mod = rf"{{\fax-0.45\t(0,{half_speed},\fax0.35)\t({half_speed},{speed_ms},\fax0)}}"
+            elif transition_style == "stamp":
+                effect_mod = rf"{{\fscx138\fscy138\bord12\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\bord5\alpha&H00&)}}"
+            elif transition_style == "focus":
+                effect_mod = rf"{{\blur9\alpha&HFF&\t(0,{speed_ms},\blur0\alpha&H00&)}}"
 
         if reveal_mode == "continuous" and transition_style in {"slide", "drop"}:
             # Continuous mode already uses \move for vertical scrolling.
             effect_mod = ""
 
-        if fx_scope == "page" and reveal_mode != "continuous" and not is_page_start:
-            # The page-level entrance already played on this page's first line.
-            effect_mod = ""
-
-        total_visible_now = 1 + min(upcoming_count, max(0, len(parsed_lines) - (i + 1)))
+        total_visible_now = 1 + min(upcoming_count, max(0, len(display_lines) - (i + 1)))
         top_y = center_y - int(((total_visible_now - 1) * line_height) / 2)
         current_y = top_y
         pos_tag = rf"\an5\pos({center_x},{current_y})"
@@ -2935,9 +3468,9 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
         # Display upcoming lines based on reveal mode (block/eager only).
         if show_upcoming and transition_style != "scroll":
             for offset in range(1, upcoming_count + 1):
-                if i + offset >= len(parsed_lines):
+                if i + offset >= len(display_lines):
                     break
-                next_text = parsed_lines[i + offset][1]
+                next_text = display_lines[i + offset]["text"]
                 next_y = top_y + (offset * line_height)
                 events.append(
                     f"Dialogue: 1,{start_str},{end_str},Upcoming,,0,0,0,,{{\\an5\\pos({center_x},{next_y})}}{next_text}"
@@ -3101,8 +3634,10 @@ def execute_ffmpeg_burn(
     audio_filter = _build_audio_filter(volume=volume, pitch=pitch)
     if audio_filter:
         cmd.extend(["-filter:a", audio_filter])
+    encoder_args = _render_video_encoder_args(render_device)
+    actual_device = "cuda" if "h264_nvenc" in encoder_args else "cpu"
     cmd.extend([
-        *_render_video_encoder_args(render_device),
+        *encoder_args,
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-shortest",
@@ -3110,9 +3645,17 @@ def execute_ffmpeg_burn(
     ])
 
     if job_id:
-        _run_cancellable_command(job_id, cmd, f"Creating Karaoke video of {audio_filename}", 30, 95)
+        _run_cancellable_command(
+            job_id,
+            cmd,
+            f"Creating Karaoke video of {audio_filename}",
+            30,
+            95,
+            total_duration=_probe_media_duration(render_audio_path),
+        )
     else:
         subprocess.run(cmd, check=True)
+    return actual_device
 
 @app.post("/api/burn-video")
 def burn_video(
@@ -3166,7 +3709,7 @@ def burn_video(
         "render",
         section="render",
         stage="Creating Karaoke Video",
-        target_key=f"render:{rel_audio}:{normalized_source}",
+        target_key=f"render:{rel_audio}:{normalized_source}:{render_token}",
         audio_filename=rel_audio,
         project_name=project_name,
         font_name=font_name,
@@ -3210,7 +3753,9 @@ def list_jobs(project_name: str = ""):
     with JOB_LOCK:
         jobs = [_job_view(job) for job in sorted(JOBS.values(), key=lambda item: item["created_at"], reverse=True)]
     if project_name:
-        jobs = [job for job in jobs if job.get("project_name") == project_name]
+        # Keep project-less ingest/download jobs visible in every view: a fresh URL
+        # download has no resolved project name until it finishes downloading.
+        jobs = [job for job in jobs if job.get("project_name") == project_name or not job.get("project_name")]
     return {"jobs": jobs}
 
 
@@ -3258,7 +3803,17 @@ def save_lyrics(filename: str = Form(...), content: str = Form(...)):
 @app.get("/api/load-lyrics")
 def load_lyrics(filename: str):
     p = _resolve_output_path(filename, require_exists=False)
-    return {"content": p.read_text(encoding="utf-8") if p.exists() else ""}
+    content = p.read_text(encoding="utf-8") if p.exists() else ""
+    # Try to extract provider info from metadata file next to LRC
+    metadata_file = p.with_suffix(".lrc.meta") if p.suffix == ".lrc" else p.parent / f"{p.stem}.lrc.meta"
+    provider = None
+    if metadata_file.exists():
+        try:
+            meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            provider = meta.get("provider")
+        except Exception:
+            pass
+    return {"content": content, "provider": provider}
 
 @app.get("/api/list-files")
 def list_files(sources_only: bool = False):
@@ -3266,6 +3821,40 @@ def list_files(sources_only: bool = False):
     if sources_only:
         projects = [item for item in projects if item.get("audio_filename")]
     return {"files": projects}
+
+
+@app.get("/api/export-project")
+def export_project(audio_filename: str):
+    try:
+        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"message": str(exc)})
+
+    project_dir = audio_path.parent
+    archive_name = f"{project_dir.name}.zip"
+    archive_file = tempfile.NamedTemporaryFile(prefix="onepage-karaoke-", suffix=".zip", delete=False)
+    archive_path = Path(archive_file.name)
+    archive_file.close()
+
+    try:
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for source_path in sorted(project_dir.rglob("*")):
+                if source_path.is_file() and not source_path.is_symlink():
+                    archive.write(source_path, Path(project_dir.name) / source_path.relative_to(project_dir))
+    except Exception as exc:
+        archive_path.unlink(missing_ok=True)
+        return JSONResponse(status_code=500, content={"message": f"Failed to export project: {exc}"})
+
+    def stream_archive():
+        try:
+            with archive_path.open("rb") as archive_stream:
+                while chunk := archive_stream.read(1024 * 1024):
+                    yield chunk
+        finally:
+            archive_path.unlink(missing_ok=True)
+
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(archive_name)}"}
+    return StreamingResponse(stream_archive(), media_type="application/zip", headers=headers)
 
 
 @app.get("/api/vocal-waveform")
@@ -3347,6 +3936,11 @@ def upload_bg(file: UploadFile = File(...), audio_filename: str = Form("")):
     with target.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     return {"status": "success"}
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():
+    return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
 def index_page():

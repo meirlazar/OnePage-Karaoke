@@ -151,36 +151,15 @@
           border: 1px solid var(--control-border);
           border-radius: 4px 4px 0 0;
           box-sizing: border-box;
-          cursor: pointer;
+          cursor: grab;
+          touch-action: none;
+          user-select: none;
         }
         #vocalWaveform {
           display: block;
           width: 100%;
           height: 100%;
         }
-           .vocal-waveform-tools {
-             position: absolute;
-             top: 4px;
-             right: 6px;
-             z-index: 2;
-             display: flex;
-             gap: 2px;
-           }
-           .vocal-waveform-tools button {
-             width: 22px;
-             height: 20px;
-             padding: 0;
-             border: 1px solid var(--accent);
-             background: var(--control-bg);
-             color: var(--accent);
-             font-size: 14px;
-             line-height: 18px;
-             cursor: pointer;
-           }
-           .vocal-waveform-tools button:hover {
-             background: var(--accent);
-             color: var(--button-fg);
-           }
       input[type="text"], input[type="number"], input[type="range"], select, textarea {
         width: 100%;
         padding: 8px 10px;
@@ -260,10 +239,11 @@
         position: absolute;
         top: 0; left: 0; width: 100%; padding: 12px;
         background: linear-gradient(180deg, color-mix(in srgb, var(--overlay-bg) 95%, transparent) 0%, color-mix(in srgb, var(--overlay-bg) 40%, transparent) 70%, transparent 100%);
-        display: flex; flex-wrap: wrap; gap: 10px; z-index: 10; opacity: 0.15; transition: opacity 0.3s ease;
+        display: flex; flex-wrap: wrap; gap: 10px; z-index: 10; opacity: 0.12; transition: opacity 0.5s ease;
         align-items: center; justify-content: center; border-radius: var(--radius) var(--radius) 0 0;
       }
-      .preview-pane:hover .preview-header-overlay { opacity: 1; }
+      /* Auto-fade: JS adds .controls-visible on interaction, then removes it after a timeout. */
+      .preview-header-overlay.controls-visible { opacity: 1; }
       .section-toggle { cursor: pointer; }
       .section-toggle:active { cursor: grabbing; }
       .panel-dragging { cursor: grabbing !important; user-select: none; z-index: 50; opacity: 0.92; box-shadow: 0 18px 40px color-mix(in srgb, var(--shadow) 55%, transparent); pointer-events: none; }
@@ -372,10 +352,35 @@
         .preview-pane { position: static; min-width: 0; }
         .card { min-width: 0; }
       }
+
+      /* ---- Touch timing controls (tap Start/End on a phone/tablet) ---- */
+      .touch-timing-controls { display: none; gap: 10px; padding: 10px 16px; background: var(--bg-surface); border-top: 1px solid var(--border); }
+      .touch-timing-controls .btn { flex: 1; padding: 16px 12px; font-size: 16px; font-weight: 800; letter-spacing: 0.04em; border-radius: 8px; touch-action: manipulation; user-select: none; }
+      .touch-timing-btn-start { background: var(--success); color: var(--button-fg); }
+      .touch-timing-btn-end { background: var(--accent); color: var(--button-fg); }
+      .touch-timing-controls .btn:active { transform: scale(0.97); filter: brightness(1.15); }
+
+      /* Mobile mode: triggered automatically for small/touch screens or via the toggle. */
+      body.mobile-mode .app-layout { grid-template-columns: 1fr; }
+      body.mobile-mode .top-panels { grid-template-columns: 1fr; }
+      body.mobile-mode .preview-pane { position: static; min-width: 0; min-height: 0; resize: none; }
+      body.mobile-mode .card { min-width: 0; }
+      body.mobile-mode .touch-timing-controls { display: flex; }
+      body.mobile-mode .preview-header-overlay { padding: 8px; gap: 6px; }
+      body.mobile-mode .compact-ctrl { font-size: 12px; padding: 6px 8px; }
+      body.mobile-mode .compact-ctrl input[type="color"] { width: 26px; height: 26px; }
+      body.mobile-mode .step-btn { width: 30px; height: 30px; line-height: 26px; font-size: 14px; }
+      body.mobile-mode .media-controls { gap: 8px; padding: 10px; }
+      body.mobile-mode .media-controls .btn { padding: 10px 14px; font-size: 15px; }
+      body.mobile-mode .integrated-timing-rail { flex-wrap: wrap; }
+      body.mobile-mode .integrated-timing-rail .btn-small { padding: 10px 12px; font-size: 13px; }
+      #mobileModeToggle { position: fixed; right: 12px; bottom: 12px; z-index: 200; opacity: 0.85; }
     </style>
+
 </head>
 <body>
     <h2 style="text-align: center; margin-bottom: 24px; letter-spacing: -0.5px">OnePage-Karaoke Creator</h2>
+    <button type="button" id="mobileModeToggle" class="btn btn-small" onclick="toggleMobileMode()" title="Toggle mobile-friendly layout">📱 Mobile</button>
 
     <div class="app-layout">
       <div class="sidebar">
@@ -460,7 +465,9 @@
           <div id="sectionGrabLyricsBody" class="section-body">
             <label>Lyrics Service</label>
             <select id="lyricsProvider">
-              <option value="lrclib" selected>lrclib</option>
+              <option value="auto" selected>Auto (best result)</option>
+              <option value="lrclib">LRCLib</option>
+              <option value="syncedlyrics">syncedlyrics</option>
               <option value="genius">Genius</option>
             </select>
             <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
@@ -477,12 +484,13 @@
               <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
               <span id="lyricsReadyBadge" class="state-badge state-waiting">Not Ready</span>
             </div>
-            <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..."></textarea>
-            <button class="btn btn-wide" style="margin-top: 10px;" onclick="saveLyricsData()">Save Lyrics & Update Preview</button>
+            <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()"></textarea>
+            <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted); text-align:center;">Edits save automatically. Timing-mode adjustments update these lyrics live.</div>
             <div class="row2" style="margin-top: 10px;">
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('major')" title="Rebuild timing from the AI alignment">Major Auto-Correct</button>
             </div>
+            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="autoCorrectWordTiming('safe-word')" title="Rebuild word timing while preventing overlapping or stalled word highlights">Safe Word-Level Sync</button>
             <div class="row2" style="margin-top: 10px;">
               <select id="customTimingMaxOffset" title="Maximum seconds each line is allowed to shift">
                 <option value="1">Max offset: 1s</option>
@@ -495,9 +503,12 @@
               </select>
               <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
             </div>
-            <div style="display:grid; grid-template-columns: 44px 1fr 44px; gap:8px; margin-top:10px; align-items:center;">
+            <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
               <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="revertLyricsRevision()" title="Load this lyrics revision">Load This Revision (Lyrics & Timing)</button>
+              <div style="min-width:0; text-align:center;">
+                <div style="font-size:10px; color:var(--text-muted);">Lyrics Revisions (auto-loaded)</div>
+                <div id="lyricsRevisionMeta" style="min-height:40px; margin-top:4px; font-size:9px; color:var(--text-muted); overflow:hidden; line-height:1.3;" aria-live="polite">Revision -</div>
+              </div>
               <button class="btn btn-small" onclick="stepLyricsRevision(1)" title="Next lyrics version">▶</button>
             </div>
           </div>
@@ -627,7 +638,7 @@
             <div class="compact-ctrl">
               <span style="color: var(--text-muted)">FX</span>
               <select id="transitionStyle" onchange="updatePreview()" style="width: 65px">
-                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option>
+                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
               </select>
               <select id="fxScope" onchange="updatePreview()" style="width: 65px" title="Transition Scope">
                 <option value="page">Page</option><option value="line">Line</option><option value="word">Word</option>
@@ -665,19 +676,19 @@
           <div style="display: flex; gap: 6px">
             <button class="btn btn-small" onclick="manualTimingStepBackward()">Prev</button>
             <button class="btn btn-small" onclick="manualTimingStepForward()">Next</button>
-            <button class="btn btn-small" onclick="resetManualTimingSession()">Reset</button>
-            <button class="btn btn-small" style="border-color: var(--success); color: var(--success)" onclick="applyManualTimingToLyrics()">Push to Editor</button>
+            <button class="btn btn-small" onclick="resetPreviewAndTiming()">Reset</button>
           </div>
         </div>
 
-        <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Vocal dynamics">
+        <div class="touch-timing-controls" id="touchTimingControls">
+          <button class="btn touch-timing-btn-start" type="button"
+            onpointerdown="onTouchTimingPress(event, 'start')">▶ START word (S)</button>
+          <button class="btn touch-timing-btn-end" type="button"
+            onpointerdown="onTouchTimingPress(event, 'end')">⏹ END word (F)</button>
+        </div>
+
+        <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Scroll up/down to make vocal dynamics taller/smaller. Drag left/right to pan. Click to seek.">
           <canvas id="vocalWaveform" aria-label="Vocal dynamics waveform"></canvas>
-           <div class="vocal-waveform-tools" aria-label="Waveform navigation and size">
-             <button type="button" id="waveformUp" title="Increase waveform height">↑</button>
-             <button type="button" id="waveformDown" title="Decrease waveform height">↓</button>
-             <button type="button" id="waveformBack" title="Move waveform backward">←</button>
-             <button type="button" id="waveformForward" title="Move waveform forward">→</button>
-           </div>
         </div>
 
         <div class="media-controls">
@@ -702,9 +713,9 @@
           <div class="media-inline-control">
             <label>Res</label>
             <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
-              <option value="640x360">360p (640x360)</option>
+              <option value="640x360" selected>360p (640x360)</option>
               <option value="960x540">540p (960x540)</option>
-              <option value="1280x720" selected>720p (1280x720)</option>
+              <option value="1280x720">720p (1280x720)</option>
               <option value="1920x1080">1080p (1920x1080)</option>
             </select>
           </div>
@@ -732,6 +743,7 @@
       let vocalWaveformGain = 1.6;
       let vocalWaveformWindowStart = 0;
       const vocalWaveformWindowSize = 0.4;
+      let vocalWaveformDrag = null;
 
       let lyricLines = [];
       let bgImageObj = null;
@@ -742,6 +754,7 @@
       let lastCommittedLyricsText = "";
       let jobPollTimer = null;
       let lastJobStatusById = new Map();
+      let lastGrabbedLyricsProvider = null;
       let isSeekingPreview = false;
       let previewConfigSnapshot = null;
       let previewConfigLocked = false;
@@ -754,14 +767,28 @@
       let currentThemeId = "";
       let frontendDebugIssues = [];
       let lastDebugReportText = "";
-      let previewWidth = 1280;
-      let previewHeight = 720;
+      let previewWidth = 640;
+      let previewHeight = 360;
       let previewShouldStartAtZero = false;
       let karaokePlaceholderImg = null;
       let activeFxScope = "page";
       let activeTransitionStyle = "none";
       let activeFxSpeed = 0.6;
       let bouncingBallCandidate = null;
+      let themeAnimationActive = false;
+
+        function getWaveformColors() {
+          const background = getThemeColor("--control-bg", "#111821");
+          const waveform = getThemeColor("--waveform-accent", getThemeColor("--accent", "#45f3ff"));
+          const divider = getThemeColor("--waveform-divider", getThemeColor("--divider", "#333333"));
+          const playhead = getThemeColor("--waveform-playhead", getThemeColor("--playhead", "#d71920"));
+          return {
+            background,
+            waveform: _contrastRatio(waveform, background) >= 3 ? waveform : _pickReadableText(background, [waveform, getThemeColor("--accent-hover", "#66fcf1"), "#00e5ff", "#ffcf66", "#ffffff", "#111111"]),
+            divider: _contrastRatio(divider, background) >= 2 ? divider : _pickReadableText(background, [divider, getThemeColor("--text-muted", "#8fa7b2"), "#ffffff", "#111111"]),
+            playhead: _contrastRatio(playhead, background) >= 3 ? playhead : _pickReadableText(background, [playhead, getThemeColor("--danger", "#ff8a80"), "#ffcf66", "#ffffff", "#111111"]),
+          };
+        }
 
         function drawVocalWaveform() {
           if (!vocalWaveformCanvas || !vocalWaveformRail) return;
@@ -775,11 +802,12 @@
             vocalWaveformCanvas.height = pixelHeight;
           }
           const waveformCtx = vocalWaveformCanvas.getContext("2d");
+          const colors = getWaveformColors();
           waveformCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
           waveformCtx.clearRect(0, 0, width, height);
-          waveformCtx.fillStyle = getThemeColor("--control-bg", "#111821");
+          waveformCtx.fillStyle = colors.background;
           waveformCtx.fillRect(0, 0, width, height);
-          waveformCtx.strokeStyle = getThemeColor("--divider", "#333333");
+          waveformCtx.strokeStyle = colors.divider;
           waveformCtx.lineWidth = 1;
           waveformCtx.beginPath();
           waveformCtx.moveTo(0, height / 2);
@@ -790,7 +818,7 @@
             const startIndex = Math.floor(vocalWaveformWindowStart * vocalWaveformPeaks.length);
             const endIndex = Math.max(startIndex + 1, Math.ceil((vocalWaveformWindowStart + vocalWaveformWindowSize) * vocalWaveformPeaks.length));
             const visiblePeaks = vocalWaveformPeaks.slice(startIndex, endIndex);
-            waveformCtx.fillStyle = getThemeColor("--accent", "#45f3ff");
+            waveformCtx.fillStyle = colors.waveform;
             const step = width / visiblePeaks.length;
             visiblePeaks.forEach((peak, index) => {
               const amplitude = Math.max(2, Math.min(height * 0.48, peak * vocalWaveformGain * (height * 0.48)));
@@ -805,7 +833,7 @@
               const relativePosition = ((audio.currentTime / duration) - vocalWaveformWindowStart) / vocalWaveformWindowSize;
               if (relativePosition < 0 || relativePosition > 1) return;
               const x = Math.max(0, Math.min(width, relativePosition * width));
-            waveformCtx.strokeStyle = getThemeColor("--playhead", "#d71920");
+            waveformCtx.strokeStyle = colors.playhead;
             waveformCtx.lineWidth = 2;
             waveformCtx.beginPath();
             waveformCtx.moveTo(x, 0);
@@ -861,27 +889,36 @@
           syncPlaybackUi();
         }
 
-        vocalWaveformRail?.addEventListener("click", seekFromVocalWaveform);
-        document.getElementById("waveformUp")?.addEventListener("click", (event) => {
-          event.stopPropagation();
-          vocalWaveformGain = Math.min(3.5, vocalWaveformGain + 0.25);
+        vocalWaveformRail?.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          const direction = event.deltaY < 0 ? 1 : -1;
+          vocalWaveformGain = Math.max(0.5, Math.min(3.5, vocalWaveformGain + (direction * 0.12)));
+          drawVocalWaveform();
+        }, { passive: false });
+        vocalWaveformRail?.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          vocalWaveformDrag = { pointerId: event.pointerId, startX: event.clientX, windowStart: vocalWaveformWindowStart, moved: false };
+          vocalWaveformRail.setPointerCapture(event.pointerId);
+          vocalWaveformRail.style.cursor = "grabbing";
+        });
+        vocalWaveformRail?.addEventListener("pointermove", (event) => {
+          if (!vocalWaveformDrag || event.pointerId !== vocalWaveformDrag.pointerId) return;
+          const delta = event.clientX - vocalWaveformDrag.startX;
+          vocalWaveformDrag.moved ||= Math.abs(delta) > 3;
+          const span = Math.max(1, vocalWaveformRail.clientWidth);
+          vocalWaveformWindowStart = Math.max(0, Math.min(1 - vocalWaveformWindowSize, vocalWaveformDrag.windowStart - ((delta / span) * vocalWaveformWindowSize)));
           drawVocalWaveform();
         });
-        document.getElementById("waveformDown")?.addEventListener("click", (event) => {
-          event.stopPropagation();
-          vocalWaveformGain = Math.max(0.5, vocalWaveformGain - 0.25);
-          drawVocalWaveform();
-        });
-        document.getElementById("waveformBack")?.addEventListener("click", (event) => {
-          event.stopPropagation();
-          vocalWaveformWindowStart = Math.max(0, vocalWaveformWindowStart - vocalWaveformWindowSize * 0.75);
-          drawVocalWaveform();
-        });
-        document.getElementById("waveformForward")?.addEventListener("click", (event) => {
-          event.stopPropagation();
-          vocalWaveformWindowStart = Math.min(1 - vocalWaveformWindowSize, vocalWaveformWindowStart + vocalWaveformWindowSize * 0.75);
-          drawVocalWaveform();
-        });
+        const endVocalWaveformDrag = (event) => {
+          if (!vocalWaveformDrag || event.pointerId !== vocalWaveformDrag.pointerId) return;
+          const wasDrag = vocalWaveformDrag.moved;
+          vocalWaveformRail.releasePointerCapture?.(event.pointerId);
+          vocalWaveformDrag = null;
+          vocalWaveformRail.style.cursor = "grab";
+          if (!wasDrag) seekFromVocalWaveform(event);
+        };
+        vocalWaveformRail?.addEventListener("pointerup", endVocalWaveformDrag);
+        vocalWaveformRail?.addEventListener("pointercancel", endVocalWaveformDrag);
         window.addEventListener("resize", drawVocalWaveform);
 // 1. Variable to keep track of our rendering loop
       let renderLoopId = null;
@@ -925,6 +962,7 @@
 
           // If the user drags the timeline/seeks while paused, force a single frame update
           previewAudio.addEventListener('seeking', () => {
+              if (manualTimingState.enabled) alignManualTimingToCurrentPlayback();
               syncPlaybackUi();
             });
             previewAudio.addEventListener('timeupdate', syncPlaybackUi);
@@ -1056,44 +1094,317 @@
         return value || fallback;
       }
 
-      function ensureKaraokePlaceholderImage() {
-        if (karaokePlaceholderImg) return karaokePlaceholderImg;
+      function createDynamicMicrophoneSVG() {
         const placeholderBg = getThemeColor("--bg-base", "#0b0c10");
         const placeholderAccent = getThemeColor("--accent", "#45f3ff");
         const placeholderSuccess = getThemeColor("--success", "#7dffb3");
         const placeholderWarning = getThemeColor("--warning", "#ffcf66");
         const placeholderPaper = getThemeColor("--paper", "#ffffff");
+        const timestamp = Date.now();
         const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="bg-${timestamp}" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="${placeholderBg}"/>
       <stop offset="35%" stop-color="${placeholderAccent}"/>
       <stop offset="65%" stop-color="${placeholderSuccess}"/>
       <stop offset="100%" stop-color="${placeholderWarning}"/>
     </linearGradient>
-    <radialGradient id="halo" cx="50%" cy="45%" r="55%">
+    <radialGradient id="halo-${timestamp}" cx="50%" cy="45%" r="55%">
       <stop offset="0%" stop-color="${placeholderPaper}" stop-opacity="0.3"/>
       <stop offset="100%" stop-color="${placeholderPaper}" stop-opacity="0"/>
     </radialGradient>
+    <style>
+      @keyframes float-note-1 {
+        0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+        100% { opacity: 0; transform: translate(80px, -150px) rotate(25deg); }
+      }
+      @keyframes float-note-2 {
+        0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+        100% { opacity: 0; transform: translate(-100px, -180px) rotate(-30deg); }
+      }
+      @keyframes float-note-3 {
+        0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+        100% { opacity: 0; transform: translate(120px, -120px) rotate(35deg); }
+      }
+      @keyframes float-note-4 {
+        0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+        100% { opacity: 0; transform: translate(-80px, -140px) rotate(-25deg); }
+      }
+      @keyframes pulse-mic {
+        0%, 100% { filter: drop-shadow(0 0 8px ${placeholderAccent}88); }
+        50% { filter: drop-shadow(0 0 20px ${placeholderAccent}ff); }
+      }
+      .music-note { animation-duration: 2.5s; animation-fill-mode: forwards; }
+      .mic-body { animation: pulse-mic 1.5s ease-in-out infinite; }
+    </style>
   </defs>
-  <rect width="1280" height="720" fill="url(#bg)"/>
-  <rect width="1280" height="720" fill="url(#halo)"/>
+  <rect width="1280" height="720" fill="url(#bg-${timestamp})"/>
+  <rect width="1280" height="720" fill="url(#halo-${timestamp})"/>
   <circle cx="330" cy="190" r="55" fill="${placeholderPaper}" fill-opacity="0.15"/>
   <circle cx="1030" cy="170" r="34" fill="${placeholderPaper}" fill-opacity="0.13"/>
   <circle cx="940" cy="560" r="62" fill="${placeholderPaper}" fill-opacity="0.12"/>
-  <g transform="translate(560 255)">
-    <rect x="0" y="0" width="112" height="112" rx="56" fill="${placeholderPaper}" fill-opacity="0.92"/>
-    <rect x="42" y="92" width="28" height="120" rx="14" fill="${placeholderPaper}" fill-opacity="0.92"/>
-    <rect x="16" y="188" width="78" height="18" rx="9" fill="${placeholderPaper}" fill-opacity="0.92"/>
+  
+  <!-- Microphone -->
+  <g transform="translate(640, 320)" class="mic-body">
+    <!-- Mic head (circular grille) -->
+    <circle cx="0" cy="-60" r="45" fill="none" stroke="${placeholderPaper}" stroke-width="3" opacity="0.95"/>
+    <circle cx="0" cy="-60" r="40" fill="none" stroke="${placeholderPaper}" stroke-width="2" opacity="0.8"/>
+    <circle cx="0" cy="-60" r="35" fill="none" stroke="${placeholderPaper}" stroke-width="1" opacity="0.7"/>
+    
+    <!-- Mic neck/stand -->
+    <rect x="-8" y="-15" width="16" height="85" rx="8" fill="${placeholderPaper}" opacity="0.9"/>
+    
+    <!-- Mic base -->
+    <ellipse cx="0" cy="75" rx="55" ry="25" fill="${placeholderPaper}" opacity="0.85"/>
+    <ellipse cx="0" cy="75" rx="50" ry="20" fill="${placeholderAccent}" opacity="0.7"/>
+    
+    <!-- Music notes floating up -->
+    <g transform="translate(-40, -80)" class="music-note" style="animation-name: float-note-1; animation-delay: 0s;">
+      <path d="M 0 0 Q 5 -8 8 -15 Q 3 -12 0 -10 Z" fill="${placeholderWarning}" opacity="0.95"/>
+      <circle cx="0" cy="8" r="5" fill="${placeholderWarning}" opacity="0.95"/>
+    </g>
+    <g transform="translate(25, -100)" class="music-note" style="animation-name: float-note-2; animation-delay: 0.3s;">
+      <path d="M 0 0 Q 5 -8 8 -15 Q 3 -12 0 -10 Z" fill="${placeholderSuccess}" opacity="0.95"/>
+      <circle cx="0" cy="8" r="5" fill="${placeholderSuccess}" opacity="0.95"/>
+      <path d="M 8 -3 Q 13 -11 16 -18 Q 11 -15 8 -13 Z" fill="${placeholderSuccess}" opacity="0.95"/>
+      <circle cx="8" cy="5" r="5" fill="${placeholderSuccess}" opacity="0.95"/>
+    </g>
+    <g transform="translate(-15, -120)" class="music-note" style="animation-name: float-note-3; animation-delay: 0.6s;">
+      <path d="M 0 0 Q 5 -8 8 -15 Q 3 -12 0 -10 Z" fill="${placeholderAccent}" opacity="0.95"/>
+      <circle cx="0" cy="8" r="5" fill="${placeholderAccent}" opacity="0.95"/>
+    </g>
+    <g transform="translate(45, -90)" class="music-note" style="animation-name: float-note-4; animation-delay: 0.9s;">
+      <path d="M 0 0 Q 5 -8 8 -15 Q 3 -12 0 -10 Z" fill="${placeholderWarning}" opacity="0.95"/>
+      <circle cx="0" cy="8" r="5" fill="${placeholderWarning}" opacity="0.95"/>
+      <path d="M 8 -3 Q 13 -11 16 -18 Q 11 -15 8 -13 Z" fill="${placeholderWarning}" opacity="0.95"/>
+      <circle cx="8" cy="5" r="5" fill="${placeholderWarning}" opacity="0.95"/>
+    </g>
   </g>
-  <text x="640" y="190" text-anchor="middle" font-size="66" font-family="Segoe UI, Arial, sans-serif" font-weight="800" fill="${placeholderPaper}">KARAOKE</text>
-  <text x="640" y="245" text-anchor="middle" font-size="30" font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="${placeholderPaper}" fill-opacity="0.92">PREVIEW STAGE</text>
+  
+  <text x="640" y="500" text-anchor="middle" font-size="52" font-family="Segoe UI, Arial, sans-serif" font-weight="800" fill="${placeholderPaper}">KARAOKE</text>
+  <text x="640" y="555" text-anchor="middle" font-size="24" font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="${placeholderPaper}" fill-opacity="0.85">Ready to Rock!</text>
 </svg>`;
-        karaokePlaceholderImg = new Image();
-        karaokePlaceholderImg.onload = () => updatePreview();
-        karaokePlaceholderImg.src = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+        return svg;
+      }
+
+      function ensureKaraokePlaceholderImage() {
+        // Always regenerate to get fresh dynamic colors and animations
+        const svg = createDynamicMicrophoneSVG();
+        const img = new Image();
+        img.onload = () => updatePreview();
+        img.src = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+        karaokePlaceholderImg = img;
         return karaokePlaceholderImg;
+      }
+
+      function animateThemeFadeIn(canvas, ctx, duration) {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          
+          if (progress < 1) {
+            ctx.clearRect(0, 0, w, h);
+            ctx.globalAlpha = progress;
+            ctx.putImageData(originalFrame, 0, 0);
+            ctx.globalAlpha = 1;
+            requestAnimationFrame(frame);
+          } else {
+            ctx.putImageData(originalFrame, 0, 0);
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function animateThemeSlideIn(canvas, ctx, duration, direction = 'left') {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        
+        const directions = { left: -1, right: 1, top: -1, bottom: 1 };
+        const isHorizontal = direction === 'left' || direction === 'right';
+        const dirValue = directions[direction] || -1;
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          const offset = isHorizontal ? w * (1 - progress) * dirValue : h * (1 - progress) * dirValue;
+          
+          ctx.clearRect(0, 0, w, h);
+          ctx.save();
+          
+          if (isHorizontal) {
+            ctx.translate(offset, 0);
+          } else {
+            ctx.translate(0, offset);
+          }
+          
+          ctx.putImageData(originalFrame, 0, 0);
+          ctx.restore();
+          
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            ctx.putImageData(originalFrame, 0, 0);
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function animateThemeShimmer(canvas, ctx, duration) {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          const shimmerPos = progress * w * 2 - w;
+          
+          ctx.putImageData(originalFrame, 0, 0);
+          
+          const gradient = ctx.createLinearGradient(shimmerPos, 0, shimmerPos + w * 0.3, 0);
+          gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+          gradient.addColorStop(0.5, `rgba(255, 255, 255, ${0.3 * (1 - progress)})`);
+          gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+          
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, w, h);
+          
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function animateThemeSwirl(canvas, ctx, duration) {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const cx = w / 2;
+        const cy = h / 2;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          const maxRadius = Math.sqrt(cx * cx + cy * cy);
+          const radius = maxRadius * progress;
+          
+          ctx.clearRect(0, 0, w, h);
+          
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-in';
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          
+          ctx.putImageData(originalFrame, 0, 0);
+          
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            ctx.putImageData(originalFrame, 0, 0);
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function animateThemePopIn(canvas, ctx, duration) {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        const blockSize = 40;
+        const cols = Math.ceil(w / blockSize);
+        const rows = Math.ceil(h / blockSize);
+        const totalBlocks = cols * rows;
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          const blocksToShow = Math.floor(progress * totalBlocks);
+          
+          ctx.putImageData(originalFrame, 0, 0);
+          
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          for (let i = blocksToShow; i < totalBlocks; i++) {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            ctx.fillRect(col * blockSize, row * blockSize, blockSize, blockSize);
+          }
+          
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            ctx.putImageData(originalFrame, 0, 0);
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function animateThemeWave(canvas, ctx, duration) {
+        const startTime = performance.now();
+        const w = canvas.width;
+        const h = canvas.height;
+        const originalFrame = ctx.getImageData(0, 0, w, h);
+        
+        function frame(currentTime) {
+          const progress = Math.min(1, (currentTime - startTime) / duration);
+          const wavePos = progress * (w + h);
+          
+          ctx.putImageData(originalFrame, 0, 0);
+          
+          const gradient = ctx.createLinearGradient(wavePos - h * 0.5, 0, wavePos + h * 0.5, 0);
+          gradient.addColorStop(0, 'rgba(0, 0, 0, 0.8)');
+          gradient.addColorStop(0.3, 'rgba(0, 0, 0, 0.4)');
+          gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.4)');
+          gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)');
+          
+          ctx.fillStyle = gradient;
+          ctx.fillRect(wavePos - h, 0, h * 2, h);
+          
+          if (progress < 1) {
+            requestAnimationFrame(frame);
+          } else {
+            ctx.putImageData(originalFrame, 0, 0);
+            themeAnimationActive = false;
+          }
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function playThemeAnimation() {
+        if (themeAnimationActive) return;
+        themeAnimationActive = true;
+        
+        const canvas = document.getElementById("videoCanvas");
+        if (!canvas) return;
+        
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        
+        const animations = [
+          () => animateThemeFadeIn(canvas, ctx, 1500),
+          () => animateThemeSlideIn(canvas, ctx, 1500, ['left', 'right', 'top', 'bottom'][Math.floor(Math.random() * 4)]),
+          () => animateThemeShimmer(canvas, ctx, 2000),
+          () => animateThemeSwirl(canvas, ctx, 1800),
+          () => animateThemePopIn(canvas, ctx, 1500),
+          () => animateThemeWave(canvas, ctx, 1800)
+        ];
+        
+        const randomAnimation = animations[Math.floor(Math.random() * animations.length)];
+        randomAnimation();
       }
 
       function setPreviewCanvasSize(width, height) {
@@ -1120,14 +1431,71 @@
         return lyricsRevisionHistoryByAudio[audioFilename];
       }
 
-      function addLyricsRevision(audioFilename, content, reason = "commit") {
+      function addLyricsRevision(audioFilename, content, reason = "commit", metadata = {}) {
         if (!audioFilename) return;
         const text = String(content || "");
         const history = getLyricsRevisionHistory(audioFilename);
         const last = history.length ? history[history.length - 1] : null;
         if (last && last.content === text) return;
-        history.push({ content: text, reason, at: Date.now() });
+        
+        // Detect timing level from content
+        const timingLevel = detectLyricsTimingLevel(content);
+        
+        const entry = {
+          content: text,
+          reason,
+          at: Date.now(),
+          modifiedAt: metadata.modifiedAt || Date.now(),
+          provider: metadata.provider || null,
+          isNew: metadata.isNew !== undefined ? metadata.isNew : reason.includes("backend") || reason.includes("grabbed"),
+          isCustomized: metadata.isCustomized || false,
+          timingLevel: metadata.timingLevel || timingLevel,
+          timestampCount: metadata.timestampCount || countTimestamps(content)
+        };
+        history.push(entry);
         lyricsRevisionCursorByAudio[audioFilename] = Math.max(0, history.length - 1);
+        updateLyricsRevisionMeta();
+      }
+
+      function detectLyricsTimingLevel(content) {
+        /*
+        Detect timing level of lyrics content:
+        - 3: Syllable-level (4+ timestamps per line average)
+        - 2: Word-level (2-3 timestamps per line average)
+        - 1: Line-level (1 timestamp per line)
+        - 0: No timing
+        */
+        const lines = String(content || "").split("\n");
+        if (lines.length === 0) return 0;
+        
+        let timestampCounts = [];
+        let totalTimestamps = 0;
+        
+        for (const line of lines) {
+          const lineTimestamps = (line.match(/\[\d+:\d+(?:\.\d+)?\]/g) || []).length;
+          if (lineTimestamps > 0) {
+            timestampCounts.push(lineTimestamps);
+            totalTimestamps += lineTimestamps;
+          }
+        }
+        
+        if (totalTimestamps === 0) return 0; // No timing
+        
+        const avgTimestampsPerLine = totalTimestamps / Math.max(1, timestampCounts.length);
+        
+        if (avgTimestampsPerLine >= 4 && totalTimestamps >= 20) {
+          return 3; // Syllable-level
+        } else if (avgTimestampsPerLine >= 1.5 && totalTimestamps >= 10) {
+          return 2; // Word-level
+        } else if (avgTimestampsPerLine >= 0.8) {
+          return 1; // Line-level
+        }
+        return 0; // No recognizable timing
+      }
+
+      function countTimestamps(content) {
+        const matches = String(content || "").match(/\[\d+:\d+(?:\.\d+)?\]/g) || [];
+        return matches.length;
       }
 
       function ensureLyricsRevisionSeed(content, reason = "seed") {
@@ -1137,8 +1505,46 @@
       }
 
       function formatRevisionLabel(entry) {
+        if (!entry) return "No revision";
         const dt = new Date(entry.at || Date.now());
-        return `${dt.toLocaleString()} (${entry.reason || "commit"})`;
+        const modDt = new Date(entry.modifiedAt || entry.at || Date.now());
+        const parts = [];
+        parts.push(`${dt.toLocaleString()}`);
+        if (entry.reason) parts.push(`(${entry.reason})`);
+        const badges = [];
+        if (entry.isNew) badges.push("🆕 New");
+        if (entry.isCustomized) badges.push("✏️ Customized");
+        if (badges.length > 0) parts.push(badges.join(" | "));
+        if (entry.provider) parts.push(`Source: ${entry.provider}`);
+        
+        // Add timing level info
+        if (entry.timingLevel !== undefined) {
+          const timingNames = { 3: "🎵 Syllable", 2: "🎶 Word", 1: "📄 Line", 0: "⏳ No timing" };
+          const timingDesc = timingNames[entry.timingLevel] || "Unknown";
+          const timeStampInfo = entry.timestampCount ? ` (${entry.timestampCount} timestamps)` : "";
+          parts.push(`Timing: ${timingDesc}${timeStampInfo}`);
+        }
+        
+        if (Math.abs((entry.modifiedAt || entry.at) - (entry.at || Date.now())) > 60000) parts.push(`Modified: ${modDt.toLocaleString()}`);
+        return parts.join(" | ");
+      }
+
+      function updateLyricsRevisionMeta() {
+        const meta = document.getElementById("lyricsRevisionMeta");
+        if (!meta) return;
+        const history = selectedAudioFilename ? getLyricsRevisionHistory(selectedAudioFilename) : [];
+        const cursor = selectedAudioFilename ? _getRevisionCursor(selectedAudioFilename) : -1;
+        if (cursor < 0 || !history[cursor]) {
+          meta.innerHTML = "<span style='color:var(--text-muted)'>Revision -</span>";
+          meta.title = "No lyric revisions available";
+          return;
+        }
+        const entry = history[cursor];
+        const revisionNum = `<span style='color:var(--accent)'>Rev ${cursor + 1}/${history.length}</span>`;
+        const formatLabel = formatRevisionLabel(entry);
+        const label = `${revisionNum}<br/>${formatLabel}`;
+        meta.innerHTML = label;
+        meta.title = formatLabel;
       }
 
       function _getRevisionCursor(audioFilename) {
@@ -1162,9 +1568,19 @@
         manualTimingState.previewFromAppliedLyrics = true;
         persistManualTiming();
         updateManualTimingHud();
+        updateLyricsRevisionMeta();
         updatePreview();
+        // Auto-save the selected revision as the active lyrics (no manual commit needed).
+        if (selectedLrcFilename) {
+          const content = target.content || "";
+          lastCommittedLyricsText = content;
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", content);
+          fetch("/api/save-lyrics", { method: "POST", body: fd }).catch((err) => console.warn("Auto-save revision failed", err));
+        }
         const pos = clamped + 1;
-        setStatus(`Revision ${pos}/${history.length} loaded: ${formatRevisionLabel(target)}. Press Commit Lyrics to save it.`);
+        setStatus(`Revision ${pos}/${history.length} loaded & saved: ${formatRevisionLabel(target)}.`);
         return true;
       }
 
@@ -1234,8 +1650,14 @@
         applyThemeVars(theme.vars || {});
         applyControlContrastVars();
         karaokePlaceholderImg = null;
+        drawVocalWaveform();
         updateThemeMeta(theme);
         if (persist) localStorage.setItem(getThemeStorageKey(), theme.id);
+        
+        // Play theme animation when theme is manually selected (persist = true)
+        if (persist) {
+          setTimeout(() => playThemeAnimation(), 50);
+        }
       }
 
       function applySelectedTheme() {
@@ -1527,7 +1949,9 @@
 
       function extractWordsFromEditor() {
         const editorText = document.getElementById("lyricsEditor").value || "";
-        const stripped = editorText.replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ");
+        const stripped = editorText
+          .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ")
+          .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ");
         return stripped.match(/\S+/g) || [];
       }
 
@@ -1605,6 +2029,25 @@
         }
       }
 
+      // Tell the backend to pause automatic ingest/lyrics jobs while hand-timing.
+      let timingModeHeartbeatTimer = null;
+      async function setBackendTimingMode(active) {
+        try {
+          const fd = new FormData();
+          fd.append("active", active ? "1" : "0");
+          await fetch("/api/timing-mode", { method: "POST", body: fd });
+        } catch (err) { /* best-effort */ }
+      }
+      function startTimingModeHeartbeat() {
+        setBackendTimingMode(true);
+        if (timingModeHeartbeatTimer) clearInterval(timingModeHeartbeatTimer);
+        timingModeHeartbeatTimer = setInterval(() => setBackendTimingMode(true), 45000);
+      }
+      function stopTimingModeHeartbeat() {
+        if (timingModeHeartbeatTimer) { clearInterval(timingModeHeartbeatTimer); timingModeHeartbeatTimer = null; }
+        setBackendTimingMode(false);
+      }
+
       async function toggleManualTiming() {
         if (!selectedAudioFilename) { alert("Select source media first."); return; }
         manualTimingState.enabled = !manualTimingState.enabled;
@@ -1638,9 +2081,11 @@
           manualTimingState.activeStart = null;
           manualTimingState.previewFromAppliedLyrics = true;
           persistManualTiming();
+          startTimingModeHeartbeat();
           setStatus("Manual timing enabled at current playback word. Use 'S' at start of word and 'F' at end of word.");
         } else {
           persistManualTiming();
+          stopTimingModeHeartbeat();
           await autoSaveManualTimingDraft();
           setStatus("Manual timing disabled. Draft timing auto-saved.");
         }
@@ -1670,6 +2115,76 @@
         updatePreview();
       }
 
+      // Reset button: always rewind playback to the start of the song. In timing
+      // mode it also clears the in-progress timing session so capture starts fresh.
+      function resetPreviewAndTiming() {
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        if (manualTimingState.enabled) {
+          resetManualTimingSession();
+        }
+        syncPlaybackUi();
+        setStatus(manualTimingState.enabled ? "Timing session reset. Playback rewound to start." : "Playback reset to start of song.");
+      }
+
+      // Auto-write the current manual timing into the lyrics editor and persist it,
+      // preserving words that have not been retimed yet (their fallback timing is kept).
+      let manualTimingAutoSaveTimer = null;
+      function autoCommitManualTiming() {
+        if (!selectedLrcFilename) return;
+        const lrc = buildManualTimingLrc();
+        if (!lrc) return;
+        document.getElementById("lyricsEditor").value = lrc;
+        parseLrcData(lrc);
+        lastCommittedLyricsText = lrc;
+        updateLyricsReadyIndicator();
+        updatePreview();
+        if (manualTimingAutoSaveTimer) clearTimeout(manualTimingAutoSaveTimer);
+        manualTimingAutoSaveTimer = setTimeout(async () => {
+          try {
+            const fd = new FormData();
+            fd.append("filename", selectedLrcFilename);
+            fd.append("content", lrc);
+            const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+            if (res.ok) setStatus("Timing updated & saved.");
+          } catch (err) { console.warn("Auto-save timing failed", err); }
+        }, 500);
+      }
+
+      // Debounced auto-save for direct edits in the lyrics editor.
+      let lyricsEditorSaveTimer = null;
+      function onLyricsEditorInput() {
+        const text = document.getElementById("lyricsEditor").value || "";
+        parseLrcData(text);
+        updateLyricsReadyIndicator();
+        updatePreview();
+        if (!selectedLrcFilename) return;
+        if (lyricsEditorSaveTimer) clearTimeout(lyricsEditorSaveTimer);
+        lyricsEditorSaveTimer = setTimeout(async () => {
+          try {
+            const fd = new FormData();
+            fd.append("filename", selectedLrcFilename);
+            fd.append("content", text);
+            const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+            if (res.ok) {
+              lastCommittedLyricsText = text;
+              const meta = {
+                provider: "manual-edit",
+                isNew: false,
+                isCustomized: true,
+                modifiedAt: Date.now(),
+                timingLevel: detectLyricsTimingLevel(text),
+                timestampCount: countTimestamps(text)
+              };
+              addLyricsRevision(selectedAudioFilename, text, "edit", meta);
+              setStatus("Lyrics auto-saved.");
+            }
+          } catch (err) { console.warn("Auto-save lyrics failed", err); }
+        }, 800);
+      }
+
       function updateManualTimingHud() {
         const total = manualTimingState.words.length;
         const currentWord = getPlaybackWordAtTime(audio.currentTime || 0) || manualTimingState.words[manualTimingState.cursor] || "-";
@@ -1683,6 +2198,8 @@
         if (!ignoreManual && manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length) {
           return Math.max(0, Math.min(manualTimingState.words.length - 1, manualTimingState.cursor));
         }
+        // Before the first timed line, playback is at the very start -> first word.
+        if (lyricLines.length && time < lyricLines[0].time) return 0;
         let wordOffset = 0;
         for (let lineIndex = 0; lineIndex < lyricLines.length; lineIndex += 1) {
           const line = lyricLines[lineIndex];
@@ -1773,6 +2290,7 @@
         persistManualTiming();
         updateManualTimingHud();
         updatePreview();
+        autoCommitManualTiming();
       }
 
       function captureManualWordEnd() {
@@ -1804,6 +2322,7 @@
         persistManualTiming();
         updateManualTimingHud();
         updatePreview();
+        autoCommitManualTiming();
       }
 
       function isTypingTarget(target) {
@@ -1838,7 +2357,7 @@
 
         const manualTimed = manualTimingState.entries
           .filter((e) => e && Number.isFinite(e.start) && e.word)
-          .map((e) => ({ word: String(e.word || "").trim(), start: Number(e.start) }))
+          .map((e) => ({ word: String(e.word || "").trim(), start: Number(e.start), end: Number.isFinite(e.end) ? Number(e.end) : null }))
           .filter((e) => e.word);
 
         if (!manualTimed.length) return "";
@@ -1846,20 +2365,33 @@
         // Preserve the full lyric body: apply manual timing where available,
         // keep remaining words using existing fallback timing so text is not lost.
         const fallback = buildTimedWordEntriesFromLyrics();
-        const out = [];
+        const resolved = [];
         let lastTime = 0;
         for (let i = 0; i < allWords.length; i += 1) {
-          let start = null;
+          let start = null, end = null;
           if (i < manualTimed.length) {
             start = manualTimed[i].start;
+            end = manualTimed[i].end;
           } else if (fallback[i] && Number.isFinite(fallback[i].start)) {
             start = Number(fallback[i].start);
           } else {
             start = lastTime + 0.35;
           }
           const safeStart = Math.max(lastTime, Number(start) || 0);
-          out.push(`[${formatLrcTime(safeStart)}]${allWords[i]}`);
+          resolved.push({ word: allWords[i], start: safeStart, end });
           lastTime = safeStart;
+        }
+        // Emit a <end> hold marker only when a word finishes before the next word starts
+        // (a real pause the user created with F); contiguous words stay start-only.
+        const out = [];
+        for (let i = 0; i < resolved.length; i += 1) {
+          const cur = resolved[i];
+          const nextStart = i + 1 < resolved.length ? resolved[i + 1].start : null;
+          let tag = `[${formatLrcTime(cur.start)}]${cur.word}`;
+          if (Number.isFinite(cur.end) && cur.end > cur.start && (nextStart === null || cur.end < nextStart - 0.03)) {
+            tag += `<${formatLrcTime(cur.end)}>`;
+          }
+          out.push(tag);
         }
         return out.join("\n");
       }
@@ -1939,6 +2471,9 @@
           };
           const liveStage = stageLabels[job.stage] || job.stage || job.label || "Working";
           const statusLabel = statusLabels[job.status] || job.status || "Waiting";
+          const queueLabel = job.status === "queued" && job.queue_position
+            ? `Queue position ${job.queue_position}`
+            : "";
           const metaBits = [];
           if (job.project_name) metaBits.push(job.project_name);
           if (job.timing_mode) {
@@ -1964,7 +2499,7 @@
           const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
           item.innerHTML = `
             <div class="job-top"><div><div class="job-label">${liveStage}</div><div class="job-sub" title="${job.label || ""}">${job.label || ""}</div></div><span class="state-badge ${statClass}">${statusLabel}</span></div>
-            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${job.message || "Working..."}</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${queueLabel || job.message || "Working..."}</div>
             <div style="font-size:11px; color:var(--text-muted); margin-top:4px; word-break:break-word;">${metaText}</div>
             <div class="job-bar"><div class="job-bar-fill" style="width:${progress}%;"></div></div>
             <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center;">
@@ -1982,12 +2517,16 @@
           const { data } = await fetchJsonSafe(`/api/jobs${query}`, {}, "Jobs API");
           const jobs = data.jobs || [];
           let shouldRefreshVault = false;
+          let completedLyricsJob = false;
           const nextStatuses = new Map();
           jobs.forEach((job) => {
             nextStatuses.set(job.id, job.status);
             const prevStatus = lastJobStatusById.get(job.id);
             if (prevStatus && prevStatus !== job.status && ["completed", "failed", "cancelled"].includes(job.status)) {
               shouldRefreshVault = true;
+              if (job.status === "completed" && ["lyrics", "word_timing"].includes((job.type || "").toLowerCase())) {
+                completedLyricsJob = true;
+              }
             }
           });
           for (const [jobId, prevStatus] of lastJobStatusById.entries()) {
@@ -2006,7 +2545,7 @@
               const ingestLike = ["url", "pipeline", "lyrics", "word_timing"].includes((job.type || "").toLowerCase());
               return active && ingestLike;
             });
-            await refreshSelectedLyricsIfReady(hasActiveIngestJob || shouldRefreshVault);
+            await refreshSelectedLyricsIfReady(completedLyricsJob || hasActiveIngestJob || shouldRefreshVault, completedLyricsJob);
           }
         } catch (err) { setStatus(`Status error: ${err}`, true); }
       }
@@ -2021,21 +2560,38 @@
         await loadJobs();
       }
 
-      async function refreshSelectedLyricsIfReady(force = false) {
+      async function refreshSelectedLyricsIfReady(force = false, lyricsJobCompleted = false) {
         if (!force) return;
-        if (!selectedLrcFilename || manualTimingApplyInFlight || (manualTimingState.enabled && manualTimingState.previewFromAppliedLyrics)) return;
+        if (!selectedLrcFilename || manualTimingApplyInFlight) return;
+        // Never meld the editor back while the user is actively hand-timing.
+        if (manualTimingState.enabled) return;
+        // A just-completed explicit lyrics pull always wins, even over in-progress timing preview.
+        if (!lyricsJobCompleted && manualTimingState.previewFromAppliedLyrics) return;
         const res = await fetch(`/api/load-lyrics?filename=${encodeURIComponent(selectedLrcFilename)}`);
         const data = await res.json();
         const existing = document.getElementById("lyricsEditor").value || "";
-        if ((data.content || "") && data.content !== existing) {
+        if ((data.content || "") && (data.content !== existing || lyricsJobCompleted)) {
           ensureLyricsRevisionSeed(existing, "loaded");
           document.getElementById("lyricsEditor").value = data.content;
           parseLrcData(data.content);
-          addLyricsRevision(selectedAudioFilename, data.content, "backend-update");
+          const timingLevel = detectLyricsTimingLevel(data.content);
+          const timestampCount = countTimestamps(data.content);
+          const metadata = {
+            provider: lastGrabbedLyricsProvider || data.provider || "auto-grab",
+            isNew: !existing || existing.length < 20,
+            isCustomized: data.isCustomized || false,
+            modifiedAt: data.modifiedAt || Date.now(),
+            timingLevel: timingLevel,
+            timestampCount: timestampCount
+          };
+          addLyricsRevision(selectedAudioFilename, data.content, "grabbed", metadata);
           manualTimingState.previewFromAppliedLyrics = true;
           persistManualTiming();
           updatePreview();
-          setStatus(`Lyrics loaded.`);
+          const timingNames = { 3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing" };
+          const timingDesc = timingNames[timingLevel] || "unknown";
+          setStatus(`Lyrics loaded from ${metadata.provider} (${timingDesc}, ${timestampCount} timestamps).`);
+          lastGrabbedLyricsProvider = null;
         }
       }
 
@@ -2132,11 +2688,16 @@
               <button class="btn btn-small vault-btn state-badge ${lrcStateClass}" data-action="lrc-state" title="Lyric timing status for this project" disabled>${lrcStateText}</button>
               <button class="btn btn-small vault-btn state-badge ${saveStateClass}" data-action="save-state" title="Saved project snapshot status" disabled>${saveStateText}</button>
               <button class="btn btn-small vault-btn" data-action="use" title="Load this project into editor and preview">Load</button>
+              <button class="btn btn-small vault-btn" data-action="export" title="Download this project and all of its files">Export</button>
               <button class="btn btn-small vault-btn" data-action="rename" title="Rename this project folder">Rename</button>
               <button class="btn btn-small vault-btn" style="border-color:var(--danger); color:var(--danger);" data-action="remove" title="Delete this project and all files">Remove</button>
             </div>`;
             if (selectedAudioFilename === f.audio_filename) row.classList.add("file-row-active");
             row.querySelector('[data-action="use"]').addEventListener("click", () => stageTrackTarget(f.url, f.audio_filename, f.project_name, f.lrc_filename || ""));
+            row.querySelector('[data-action="export"]').addEventListener("click", () => {
+              setStatus(`Exporting ${projectLabel}...`);
+              window.location.assign(`/api/export-project?audio_filename=${encodeURIComponent(f.audio_filename)}`);
+            });
             row.querySelector('[data-action="rename"]').addEventListener("click", () => beginRenameMedia(f.audio_filename, projectLabel));
             row.querySelector('[data-action="remove"]').addEventListener("click", () => deleteMediaAsset(f.audio_filename, projectLabel));
             container.appendChild(row);
@@ -2171,6 +2732,13 @@
 
         if (!res.ok) {
           setStatus(data.message || "Rename failed.", true);
+          return;
+        }
+
+        if (data.rename_pending) {
+          setStatus(data.message || "Project rename queued.");
+          await loadFileManifest();
+          await loadJobs();
           return;
         }
 
@@ -2247,7 +2815,15 @@
         parseLrcData(data.content || "");
         lyricsRevisionHistoryByAudio[selectedAudioFilename] = [];
         lyricsRevisionCursorByAudio[selectedAudioFilename] = 0;
-        ensureLyricsRevisionSeed(data.content || "", "loaded");
+        const seedMetadata = {
+          provider: data.provider || "loaded",
+          isNew: false,
+          isCustomized: false,
+          modifiedAt: data.modifiedAt || Date.now(),
+          timingLevel: detectLyricsTimingLevel(data.content || ""),
+          timestampCount: countTimestamps(data.content || "")
+        };
+        addLyricsRevision(selectedAudioFilename, data.content || "", "loaded", seedMetadata);
 
         const existing = manualTimingByAudio[selectedAudioFilename];
         if (existing) {
@@ -2373,6 +2949,7 @@
 
         applyPreviewAudioTuning();
         updateManualTimingHud();
+        updateLyricsRevisionMeta();
         updatePreview();
       }
 
@@ -2436,8 +3013,10 @@
         const text = document.getElementById("lyricsEditor").value;
         const keepTime = Number(audio.currentTime || 0);
         const wasPaused = audio.paused;
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        const lastEntry = history.length ? history[history.length - 1] : null;
+        const isCustomized = lastEntry && lastEntry.content !== text;
 
-        // Immediate viewer push on commit while preserving playback position.
         parseLrcData(text);
         updateLyricsReadyIndicator();
         updatePreview();
@@ -2460,7 +3039,15 @@
         displayTimeTracker();
 
         manualTimingState.previewFromAppliedLyrics = true;
-        addLyricsRevision(selectedAudioFilename, text, "commit");
+        const saveMetadata = {
+          provider: lastEntry?.provider || null,
+          isNew: false,
+          isCustomized: isCustomized,
+          modifiedAt: Date.now(),
+          timingLevel: detectLyricsTimingLevel(text),
+          timestampCount: countTimestamps(text)
+        };
+        addLyricsRevision(selectedAudioFilename, text, "commit", saveMetadata);
         persistManualTiming();
         updateManualTimingHud();
         updatePreview();
@@ -2470,7 +3057,7 @@
 
       async function autoGrabLyrics() {
         if (!selectedAudioFilename) { alert("Select media first."); return; }
-        const provider = (document.getElementById("lyricsProvider")?.value || "lrclib").trim();
+        const provider = (document.getElementById("lyricsProvider")?.value || "auto").trim();
         const fd = new FormData();
         fd.append("audio_filename", selectedAudioFilename);
         fd.append("provider", provider);
@@ -2479,6 +3066,8 @@
         const data = await res.json();
         if (res.ok) {
           selectedLrcFilename = data.filename || selectedLrcFilename;
+          // Store the requested provider; actual provider will come from metadata file when job completes
+          lastGrabbedLyricsProvider = provider;
           await loadJobs();
           await loadFileManifest();
         }
@@ -2532,21 +3121,24 @@
       function parseLrcData(lrcText) {
         lyricLines = [];
         const tagRegex = /\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g;
+        const endTagRegex = /<(\d+):(\d+)(?:\.(\d{1,3}))?>/g;
+        const toSeconds = (m) => parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + parseInt((m[3] || "0").padEnd(3, "0").slice(0, 3), 10) / 1000;
         const plain = [];
         lrcText.split("\n").forEach((line) => {
           const raw = (line || "").trim();
           if (!raw) return;
           const tags = [...raw.matchAll(tagRegex)];
-          if (tags.length === 0) { plain.push(raw); return; }
-          const text = raw.replace(tagRegex, "").trim();
+          if (tags.length === 0) { plain.push(raw.replace(endTagRegex, "").trim() || raw); return; }
+          const endMatches = [...raw.matchAll(endTagRegex)];
+          const text = raw.replace(tagRegex, "").replace(endTagRegex, "").trim();
           if (!text) return;
+          const endT = endMatches.length ? toSeconds(endMatches[endMatches.length - 1]) : null;
           tags.forEach((m) => {
-            const time = parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + parseInt((m[3] || "0").padEnd(3, "0").slice(0, 3), 10) / 1000;
-            lyricLines.push({ time, text });
+            lyricLines.push({ time: toSeconds(m), end: endT, text });
           });
         });
         if (lyricLines.length === 0 && plain.length > 0) {
-          let cursor = 0; plain.forEach((text) => { lyricLines.push({ time: cursor, text }); cursor += 3.5; });
+          let cursor = 0; plain.forEach((text) => { lyricLines.push({ time: cursor, end: null, text }); cursor += 3.5; });
         }
         lyricLines.sort((a, b) => a.time - b.time);
         updateLyricsReadyIndicator();
@@ -2555,7 +3147,7 @@
       // CLAMPED MATH: Prevents negative values from causing the whole screen to disappear
       // FIXED MATH: Scales perfectly 0 to 1 based on the Speed Dropdown
       function applyTransition(p, style) {
-        let alpha = 1, scale = 1, yOff = 0, blur = 0, rotation = 0;
+        let alpha = 1, scale = 1, yOff = 0, blur = 0, rotation = 0, skewX = 0;
         let pClamped = Math.max(0, Math.min(1, p));
 
         if (style === "fade") alpha = pClamped;
@@ -2569,8 +3161,13 @@
         else if (style === "glimmer") { alpha = 0.72 + (Math.sin(pClamped * Math.PI * 3) * 0.28); scale = 1 + (Math.sin(pClamped * Math.PI) * 0.03); }
         else if (style === "shake") { yOff = Math.sin(pClamped * Math.PI * 8) * 8; }
         else if (style === "flip") { scale = Math.max(0.05, Math.abs(Math.cos(pClamped * Math.PI))); }
+        else if (style === "pulse") { scale = 0.82 + (0.28 * Math.sin(pClamped * Math.PI)); alpha = 0.65 + (0.35 * pClamped); }
+        else if (style === "sway") { rotation = Math.sin(pClamped * Math.PI * 1.5) * 0.18; }
+        else if (style === "skew") { skewX = Math.sin(pClamped * Math.PI * 1.5) * 0.35; }
+        else if (style === "stamp") { scale = 1.38 - (0.38 * pClamped); alpha = pClamped; }
+        else if (style === "focus") { blur = (1 - pClamped) * 9; alpha = pClamped; }
 
-        return { alpha, scale, yOff, blur, rotation };
+        return { alpha, scale, yOff, blur, rotation, skewX };
       }
       function applyTextEffect(effect, pColor, sColor) {
         ctx.shadowBlur = 0; ctx.shadowColor = "transparent"; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
@@ -2609,7 +3206,8 @@
             manualTimingState.words.forEach((w, idx) => {
                 const entry = manualTimingState.entries[idx];
                 const startT = (entry && Number.isFinite(entry.start)) ? entry.start : null;
-                const endT = (entry && Number.isFinite(entry.end)) ? entry.end : (startT !== null ? startT + 0.3 : null);
+                // Keep end null when the word has no explicit F yet so it is treated as "open".
+                const endT = (entry && Number.isFinite(entry.end)) ? entry.end : null;
                 wordTokens.push({ text: w, start: startT, end: endT, isManual: true, idx: idx });
             });
         } else {
@@ -2618,7 +3216,11 @@
                 const nextTime = lyricLines[idx + 1] ? lyricLines[idx + 1].time : item.time + 3.0;
                 let words = (item.text || "").split(" ").filter(Boolean);
                 if (!words.length) return;
-
+                if (words.length === 1 && Number.isFinite(item.end) && item.end > item.time) {
+                    // Word-level line with an explicit end (F): fill start->end, then hold until next line.
+                    wordTokens.push({ text: words[0], start: item.time, end: item.end, isLrcStart: true });
+                    return;
+                }
                 const durPerWord = (nextTime - item.time) / words.length;
                 words.forEach((w, wIdx) => {
                     wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0 });
@@ -2646,11 +3248,24 @@
 
             let prog = 0, isActive = false, isPast = false;
             if (token.isManual) {
-                isActive = (token.idx === manualTimingState.cursor);
-                isPast = (token.idx < manualTimingState.cursor);
-                if (isActive && manualTimingState.activeStart !== null) {
-                const dur = estimateActiveWordDuration();
-                    prog = Math.max(0, Math.min(1, (currentTime - manualTimingState.activeStart) / dur));
+                const s = token.start;
+                const e = token.end;
+                if (s === null) {
+                    // Word not timed yet: unfilled and inactive.
+                    isActive = false; isPast = false; prog = 0;
+                } else if (e === null) {
+                    // Open word being captured (S pressed, awaiting F or next S).
+                    isActive = true;
+                    const dur = estimateActiveWordDuration();
+                    prog = Math.max(0, Math.min(1, (currentTime - s) / dur));
+                } else if (currentTime >= e) {
+                    // F reached: word is finished and holds fully filled through any pause.
+                    isPast = true; prog = 1;
+                } else if (currentTime >= s) {
+                    // Filling from S to F.
+                    isActive = true;
+                    const dur = Math.max(0.02, e - s);
+                    prog = Math.max(0, Math.min(1, (currentTime - s) / dur));
                 }
             } else {
                 isActive = (currentTime >= token.start && currentTime < token.end);
@@ -2780,6 +3395,7 @@
             ctx.globalAlpha = wordTransition.alpha;
             ctx.translate(x + (tw / 2), y + wordTransition.yOff);
             ctx.scale(wordTransition.scale, wordTransition.scale);
+            if (wordTransition.skewX) ctx.transform(1, 0, wordTransition.skewX, 1, 0, 0);
             ctx.rotate(wordTransition.rotation || 0);
             ctx.translate(-(x + (tw / 2)), -y);
             if (wordTransition.blur > 0) ctx.filter = `blur(${wordTransition.blur}px)`;
@@ -2787,10 +3403,9 @@
           ctx.strokeStyle = oColor;
           ctx.strokeText(t.text, x, y);
 
-          // NEW: Check if 'F' was pressed (t.end exists) and we are past that time.
-          // If so, force the word to be 100% complete!
+          // Once 'F' was pressed (finite end) and playback is past it, hold the word fully filled.
           let currentProgress = t.progress || 0;
-          if (t.end !== undefined && currentTime >= t.end) {
+          if (Number.isFinite(t.end) && currentTime >= t.end) {
               currentProgress = 1.0;
           }
 
@@ -2932,8 +3547,19 @@
         const reqVisible = Math.max(1, Math.min(4, parseInt(document.getElementById("previewLineCount").value, 10) || 3));
         const revealMode = document.getElementById("revealMode").value || "block";
 
-        let activeIdx = 0;
+        let activeIdx = -1;
         for (let i = 0; i < allLines.length; i++) { if (allLines[i].some((t) => t.active)) { activeIdx = i; break; } }
+        if (activeIdx < 0) {
+          // No word is actively filling (e.g. the pause after pressing F). Stay on the
+          // most recently started word instead of snapping back to the first page.
+          let bestStart = -Infinity;
+          for (let i = 0; i < allLines.length; i++) {
+            allLines[i].forEach((t) => {
+              if (Number.isFinite(t.start) && t.start <= time && t.start >= bestStart) { bestStart = t.start; activeIdx = i; }
+            });
+          }
+          if (activeIdx < 0) activeIdx = 0;
+        }
 
         if (allLines.length === 0) {
           ctx.save();
@@ -2992,7 +3618,7 @@
             ctx.save();
             ctx.globalAlpha = tr.alpha;
             if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
-            ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -cy);
+            ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -cy);
 
             linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx));
             ctx.restore();
@@ -3012,7 +3638,7 @@
 
               let lineY = revealMode === "continuous" ? (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap)) : (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap));
 
-              ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -lineY);
+              ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -lineY);
               drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx);
               ctx.restore();
             });
@@ -3035,12 +3661,77 @@
           ctx.restore();
         }
       }
+
+      // ---- Preview control overlay auto-fade ----
+      let previewControlsFadeTimer = null;
+      function showPreviewControls() {
+        const overlay = document.querySelector(".preview-header-overlay");
+        if (!overlay) return;
+        overlay.classList.add("controls-visible");
+        if (previewControlsFadeTimer) clearTimeout(previewControlsFadeTimer);
+        previewControlsFadeTimer = window.setTimeout(() => {
+          overlay.classList.remove("controls-visible");
+        }, 3500);
+      }
+      function initPreviewControlsAutoFade() {
+        const pane = document.getElementById("previewPane");
+        const overlay = document.querySelector(".preview-header-overlay");
+        if (!pane || !overlay) return;
+        ["pointermove", "pointerdown", "touchstart", "wheel"].forEach((evt) =>
+          pane.addEventListener(evt, showPreviewControls, { passive: true })
+        );
+        // Keep controls fully visible while the user is actually adjusting an option.
+        overlay.addEventListener("focusin", showPreviewControls);
+        overlay.addEventListener("input", showPreviewControls);
+        overlay.addEventListener("pointerenter", showPreviewControls);
+        showPreviewControls();
+      }
+
+      // ---- Touch-friendly timing capture (mobile/tablet) ----
+      function onTouchTimingPress(event, kind) {
+        if (event) event.preventDefault();
+        if (!manualTimingState.enabled) {
+          toggleManualTiming();
+          if (kind === "start") captureManualWordStart();
+          return;
+        }
+        if (kind === "start") captureManualWordStart();
+        else captureManualWordEnd();
+      }
+
+      // ---- Mobile mode ----
+      function applyMobileMode(on) {
+        document.body.classList.toggle("mobile-mode", !!on);
+        const btn = document.getElementById("mobileModeToggle");
+        if (btn) btn.textContent = on ? "🖥 Desktop" : "📱 Mobile";
+        try { localStorage.setItem("karaokeMobileMode", on ? "1" : "0"); } catch (e) {}
+        if (typeof updatePreview === "function") updatePreview();
+      }
+      function toggleMobileMode() {
+        applyMobileMode(!document.body.classList.contains("mobile-mode"));
+      }
+      function isLikelyMobileDevice() {
+        const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+        const touch = "ontouchstart" in window || (navigator.maxTouchPoints || 0) > 0;
+        const narrow = window.innerWidth <= 820;
+        return (coarse && touch) || narrow;
+      }
+      function initMobileMode() {
+        let saved = null;
+        try { saved = localStorage.getItem("karaokeMobileMode"); } catch (e) {}
+        if (saved === "1") applyMobileMode(true);
+        else if (saved === "0") applyMobileMode(false);
+        else applyMobileMode(isLikelyMobileDevice());
+      }
+
       onPreviewResolutionChange();
       applyControlContrastVars();
       enablePanelDragging();
       onFontSizeChanged(); loadFonts(); loadThemes(); loadFileManifest(); loadJobs();
       jobPollTimer = window.setInterval(loadJobs, 2000);
       updatePreview(); updateManualTimingHud();
+      initPreviewControlsAutoFade();
+      initMobileMode();
     </script>
 </body>
 </html>
