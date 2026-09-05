@@ -2,6 +2,7 @@ fastapi>=0.111,<1
 uvicorn[standard]>=0.30,<1
 python-multipart>=0.0.9,<1
 numpy<2
+Pillow>=10,<13
 demucs==4.0.1
 ctranslate2==4.4.0
 faster-whisper==0.10.0
