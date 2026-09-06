@@ -758,7 +758,7 @@
       let isSeekingPreview = false;
       let previewConfigSnapshot = null;
       let previewConfigLocked = false;
-      let manualTimingState = { enabled: false, words: [], entries: [], cursor: 0, activeStart: null, previewFromAppliedLyrics: false };
+      let manualTimingState = { enabled: false, words: [], baselineEntries: [], entries: [], cursor: 0, activeStart: null, previewFromAppliedLyrics: false, revisionIndex: null };
       let manualTimingByAudio = {};
       let manualTimingApplyInFlight = false;
       let lyricsRevisionHistoryByAudio = {};
@@ -1436,7 +1436,7 @@
         const text = String(content || "");
         const history = getLyricsRevisionHistory(audioFilename);
         const last = history.length ? history[history.length - 1] : null;
-        if (last && last.content === text) return;
+        if (last && last.content === text && !metadata.allowDuplicate) return;
         
         // Detect timing level from content
         const timingLevel = detectLyricsTimingLevel(content);
@@ -1454,6 +1454,33 @@
         };
         history.push(entry);
         lyricsRevisionCursorByAudio[audioFilename] = Math.max(0, history.length - 1);
+        updateLyricsRevisionMeta();
+      }
+
+      function beginTimingRevision() {
+        if (!selectedAudioFilename) return;
+        const content = document.getElementById("lyricsEditor").value || "";
+        addLyricsRevision(selectedAudioFilename, content, "timing edit", {
+          isNew: false,
+          isCustomized: true,
+          timingLevel: detectLyricsTimingLevel(content),
+          timestampCount: countTimestamps(content),
+          allowDuplicate: true,
+        });
+        manualTimingState.revisionIndex = _getRevisionCursor(selectedAudioFilename);
+      }
+
+      function updateTimingRevision(content) {
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        const index = Number(manualTimingState.revisionIndex);
+        if (!Number.isInteger(index) || !history[index]) return;
+        const entry = history[index];
+        entry.content = content;
+        entry.modifiedAt = Date.now();
+        entry.isCustomized = true;
+        entry.timingLevel = detectLyricsTimingLevel(content);
+        entry.timestampCount = countTimestamps(content);
+        lyricsRevisionCursorByAudio[selectedAudioFilename] = index;
         updateLyricsRevisionMeta();
       }
 
@@ -1967,7 +1994,7 @@
             entries.push({
               word,
               start,
-              end: start + perWord,
+              end: words.length === 1 && Number.isFinite(item.end) ? item.end : start + perWord,
             });
           });
         });
@@ -2054,8 +2081,9 @@
         document.getElementById("manualTimingBtn").textContent = manualTimingState.enabled ? "Timing Mode is ON" : "Enable Timing Mode";
         if (manualTimingState.enabled) {
           const existing = manualTimingByAudio[selectedAudioFilename];
-          if (existing) {
+          if (existing && Array.isArray(existing.baselineEntries)) {
             manualTimingState.words = existing.words.slice();
+            manualTimingState.baselineEntries = existing.baselineEntries.map((item) => ({ ...item }));
             manualTimingState.entries = existing.entries.map((item) => ({ ...item }));
             manualTimingState.cursor = existing.cursor;
             manualTimingState.activeStart = existing.activeStart;
@@ -2064,7 +2092,8 @@
             const seededEntries = buildTimedWordEntriesFromLyrics();
             if (seededEntries.length > 0) {
               manualTimingState.words = seededEntries.map((item) => item.word);
-              manualTimingState.entries = seededEntries.map((item) => ({ ...item }));
+              manualTimingState.baselineEntries = seededEntries.map((item) => ({ ...item }));
+              manualTimingState.entries = [];
               manualTimingState.cursor = 0;
               manualTimingState.activeStart = null;
               manualTimingState.previewFromAppliedLyrics = false;
@@ -2080,9 +2109,10 @@
           ));
           manualTimingState.activeStart = null;
           manualTimingState.previewFromAppliedLyrics = true;
+          beginTimingRevision();
           persistManualTiming();
           startTimingModeHeartbeat();
-          setStatus("Manual timing enabled at current playback word. Use 'S' at start of word and 'F' at end of word.");
+          setStatus("Timing revision opened. Use 'S' at word start and 'F' at word end; only captured words replace the prior timing.");
         } else {
           persistManualTiming();
           stopTimingModeHeartbeat();
@@ -2097,15 +2127,18 @@
         if (!selectedAudioFilename) return;
         manualTimingByAudio[selectedAudioFilename] = {
           words: manualTimingState.words.slice(),
+          baselineEntries: manualTimingState.baselineEntries.map((item) => ({ ...item })),
           entries: manualTimingState.entries.map((item) => ({ ...item })),
           cursor: manualTimingState.cursor,
           activeStart: manualTimingState.activeStart,
           previewFromAppliedLyrics: manualTimingState.previewFromAppliedLyrics,
+          revisionIndex: manualTimingState.revisionIndex,
         };
       }
 
       function resetManualTimingSession() {
         manualTimingState.words = extractWordsFromEditor();
+        manualTimingState.baselineEntries = buildTimedWordEntriesFromLyrics();
         manualTimingState.entries = [];
         manualTimingState.cursor = 0;
         manualTimingState.activeStart = null;
@@ -2129,8 +2162,8 @@
         setStatus(manualTimingState.enabled ? "Timing session reset. Playback rewound to start." : "Playback reset to start of song.");
       }
 
-      // Auto-write the current manual timing into the lyrics editor and persist it,
-      // preserving words that have not been retimed yet (their fallback timing is kept).
+      // Auto-write timing into the active timing revision. Untouched words retain
+      // their baseline timing; only explicit S/F captures override it.
       let manualTimingAutoSaveTimer = null;
       function autoCommitManualTiming() {
         if (!selectedLrcFilename) return;
@@ -2138,6 +2171,7 @@
         if (!lrc) return;
         document.getElementById("lyricsEditor").value = lrc;
         parseLrcData(lrc);
+        updateTimingRevision(lrc);
         lastCommittedLyricsText = lrc;
         updateLyricsReadyIndicator();
         updatePreview();
@@ -2148,7 +2182,10 @@
             fd.append("filename", selectedLrcFilename);
             fd.append("content", lrc);
             const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
-            if (res.ok) setStatus("Timing updated & saved.");
+            if (res.ok) {
+              setStatus("Timing updated & saved.");
+              await autoSaveManualTimingDraft();
+            }
           } catch (err) { console.warn("Auto-save timing failed", err); }
         }, 500);
       }
@@ -2355,25 +2392,25 @@
         const allWords = extractWordsFromEditor();
         if (!allWords.length) return "";
 
-        const manualTimed = manualTimingState.entries
-          .filter((e) => e && Number.isFinite(e.start) && e.word)
-          .map((e) => ({ word: String(e.word || "").trim(), start: Number(e.start), end: Number.isFinite(e.end) ? Number(e.end) : null }))
-          .filter((e) => e.word);
+        const hasOverrides = manualTimingState.entries.some((entry) => entry && Number.isFinite(entry.start) && entry.word);
+        if (!hasOverrides) return "";
 
-        if (!manualTimed.length) return "";
-
-        // Preserve the full lyric body: apply manual timing where available,
-        // keep remaining words using existing fallback timing so text is not lost.
-        const fallback = buildTimedWordEntriesFromLyrics();
+        // Preserve the full lyric body: use the baseline timing unless this exact
+        // word has an explicit S/F capture in the current timing revision.
+        const fallback = manualTimingState.baselineEntries.length
+          ? manualTimingState.baselineEntries
+          : buildTimedWordEntriesFromLyrics();
         const resolved = [];
         let lastTime = 0;
         for (let i = 0; i < allWords.length; i += 1) {
           let start = null, end = null;
-          if (i < manualTimed.length) {
-            start = manualTimed[i].start;
-            end = manualTimed[i].end;
+          const override = manualTimingState.entries[i];
+          if (override && Number.isFinite(override.start) && String(override.word || "").trim()) {
+            start = Number(override.start);
+            end = Number.isFinite(override.end) ? Number(override.end) : null;
           } else if (fallback[i] && Number.isFinite(fallback[i].start)) {
             start = Number(fallback[i].start);
+            end = Number.isFinite(fallback[i].end) ? Number(fallback[i].end) : null;
           } else {
             start = lastTime + 0.35;
           }
@@ -2826,15 +2863,18 @@
         addLyricsRevision(selectedAudioFilename, data.content || "", "loaded", seedMetadata);
 
         const existing = manualTimingByAudio[selectedAudioFilename];
-        if (existing) {
+        if (existing && Array.isArray(existing.baselineEntries)) {
           manualTimingState.words = existing.words.slice();
+          manualTimingState.baselineEntries = existing.baselineEntries.map((item) => ({ ...item }));
           manualTimingState.entries = existing.entries.map((item) => ({ ...item }));
           manualTimingState.cursor = existing.cursor;
           manualTimingState.activeStart = existing.activeStart;
           manualTimingState.previewFromAppliedLyrics = !!existing.previewFromAppliedLyrics;
+          manualTimingState.revisionIndex = existing.revisionIndex ?? null;
         } else {
           manualTimingState.words = extractWordsFromEditor();
-          manualTimingState.entries = []; manualTimingState.cursor = 0; manualTimingState.activeStart = null; manualTimingState.previewFromAppliedLyrics = false;
+          manualTimingState.baselineEntries = buildTimedWordEntriesFromLyrics();
+          manualTimingState.entries = []; manualTimingState.cursor = 0; manualTimingState.activeStart = null; manualTimingState.previewFromAppliedLyrics = false; manualTimingState.revisionIndex = null;
         }
         await loadProjectSnapshot();
         updateManualTimingHud(); updateLyricsReadyIndicator(); updatePreview();
@@ -2867,10 +2907,12 @@
           lyricsText: document.getElementById("lyricsEditor").value || "",
           manualTiming: manualTimingByAudio[selectedAudioFilename] || {
             words: manualTimingState.words,
+            baselineEntries: manualTimingState.baselineEntries,
             entries: manualTimingState.entries,
             cursor: manualTimingState.cursor,
             activeStart: manualTimingState.activeStart,
             previewFromAppliedLyrics: manualTimingState.previewFromAppliedLyrics,
+            revisionIndex: manualTimingState.revisionIndex,
           },
           lyricRevisions: lyricsRevisionHistoryByAudio[selectedAudioFilename] || [],
           uiThemeId: currentThemeId,
@@ -2916,10 +2958,12 @@
           manualTimingByAudio[selectedAudioFilename] = state.manualTiming;
           if (manualTimingState.enabled) {
             manualTimingState.words = (state.manualTiming.words || []).slice();
+            manualTimingState.baselineEntries = (state.manualTiming.baselineEntries || buildTimedWordEntriesFromLyrics()).map((item) => ({ ...item }));
             manualTimingState.entries = (state.manualTiming.entries || []).map((item) => ({ ...item }));
             manualTimingState.cursor = Number(state.manualTiming.cursor || 0);
             manualTimingState.activeStart = state.manualTiming.activeStart ?? null;
             manualTimingState.previewFromAppliedLyrics = !!state.manualTiming.previewFromAppliedLyrics;
+            manualTimingState.revisionIndex = state.manualTiming.revisionIndex ?? null;
           }
         }
 
