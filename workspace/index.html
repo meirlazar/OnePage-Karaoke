@@ -35,6 +35,8 @@
         --active-glow: #45f3ff;
         --radius: 6px;
       }
+      /* border-box everywhere so padding never overflows resized panels */
+      * { box-sizing: border-box; }
       body {
         font-family: "Segoe UI", Roboto, sans-serif;
         margin: 0;
@@ -48,12 +50,30 @@
         display: grid;
         grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
         gap: 20px;
-        max-width: 1900px;
+        max-width: none;
         margin: 0 auto;
         align-items: start;
+        position: relative;
+        overflow: visible;
       }
-      .right-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-      .top-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+      .right-column { 
+        display: flex; 
+        flex-direction: column; 
+        gap: 12px; 
+        min-width: 0;
+        position: relative;
+        overflow: visible;
+        flex: 1;
+        min-height: 0;
+      }
+      .top-panels { 
+        display: grid; 
+        grid-template-columns: repeat(3, minmax(0, 1fr)); 
+        gap: 12px; 
+        align-items: start;
+        position: relative;
+        overflow: visible;
+      }
       .top-panels .card { margin-bottom: 0; min-height: 0; }
       .card {
         background: var(--bg-surface);
@@ -62,14 +82,23 @@
         border: 1px solid var(--border);
         margin-bottom: 16px;
         box-shadow: 0 4px 15px color-mix(in srgb, var(--shadow) 30%, transparent);
-        resize: vertical;
-        overflow: auto;
+        resize: both;
+        overflow: hidden;
         width: 100%;
         max-width: 100%;
         box-sizing: border-box;
-        min-width: 0;
+        min-width: 280px;
         min-height: 120px;
         align-self: start;
+        position: relative;
+        flex: none;
+        display: flex;
+        flex-direction: column;
+      }
+      .card.panel-dragging {
+        cursor: grabbing;
+        opacity: 0.95;
+        box-shadow: 0 10px 40px color-mix(in srgb, var(--shadow) 50%, transparent);
       }
       label {
         display: block;
@@ -182,6 +211,41 @@
         font-size: 12px;
         resize: vertical;
       }
+      /* Chorus marking: a mirrored overlay sits behind a transparent-text
+         textarea so marked words can render bold (a textarea cannot style
+         individual words itself). Every font/box property below MUST stay in
+         sync with the textarea rules above or the text will drift apart. */
+      .lyrics-editor-wrap { position: relative; }
+      .lyrics-editor-wrap textarea {
+        position: relative;
+        background: transparent;
+        color: transparent;
+        caret-color: var(--control-fg);
+        z-index: 1;
+      }
+      .lyrics-editor-wrap textarea::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+      .lyrics-overlay {
+        position: absolute;
+        inset: 0;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: var(--control-bg);
+        color: var(--control-fg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: normal;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        overflow: hidden;
+        box-sizing: border-box;
+        pointer-events: none;
+        z-index: 0;
+      }
+      .lyrics-overlay .chorus-on {
+        font-weight: 700;
+        color: var(--accent);
+      }
       .section-toggle {
         width: 100%;
         display: flex;
@@ -201,6 +265,7 @@
       .section-toggle-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block; }
       .section-toggle-arrow { font-size: 18px; color: var(--accent); transition: transform 0.2s ease; position: absolute; right: 0; top: 2px; }
       .section-toggle.collapsed .section-toggle-arrow { transform: rotate(-90deg); }
+      .section-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
       .section-body.hidden { display: none; }
       .btn {
         background: var(--button-bg);
@@ -229,11 +294,24 @@
         border-radius: var(--radius);
         overflow: hidden;
         box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow) 50%, transparent);
-        resize: vertical;
+        resize: both;
         max-width: 100%;
         box-sizing: border-box;
-        min-width: 0;
-        min-height: 440px;
+        min-width: 320px;
+        min-height: 180px;
+        flex: 1;
+      }
+      #videoCanvas {
+        display: block;
+        /* Fill the pane in both axes while preserving the 16:9 frame via
+           object-fit, so resizing the pane vertically actually grows the
+           visible canvas instead of being ignored by aspect-ratio. */
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        flex: 1;
+        object-fit: contain;
+        background: #000;
       }
       .preview-header-overlay {
         position: absolute;
@@ -244,8 +322,9 @@
       }
       /* Auto-fade: JS adds .controls-visible on interaction, then removes it after a timeout. */
       .preview-header-overlay.controls-visible { opacity: 1; }
-      .section-toggle { cursor: pointer; }
+      .section-toggle { cursor: grab; user-select: none; }
       .section-toggle:active { cursor: grabbing; }
+      .section-toggle-arrow { display: inline-block; transition: transform 0.3s ease; }
       .panel-dragging { cursor: grabbing !important; user-select: none; z-index: 50; opacity: 0.92; box-shadow: 0 18px 40px color-mix(in srgb, var(--shadow) 55%, transparent); pointer-events: none; }
       .panel-drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; }
       body.panel-drag-active, body.panel-drag-active * { cursor: grabbing !important; }
@@ -278,7 +357,7 @@
       .state-ready, .state-completed { background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 20%, transparent); }
       .state-running { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); }
       .state-failed { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent); }
-      .job-list { max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+      .job-list { max-height: none; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
       .job-item { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--bg-base); }
       .job-top { display: flex; justify-content: space-between; align-items: center; }
       .job-label { font-size: 13px; font-weight: 600; color: var(--paper); }
@@ -382,7 +461,14 @@
     <h2 style="text-align: center; margin-bottom: 24px; letter-spacing: -0.5px">OnePage-Karaoke Creator</h2>
     <button type="button" id="mobileModeToggle" class="btn btn-small" onclick="toggleMobileMode()" title="Toggle mobile-friendly layout">📱 Mobile</button>
 
+    <!-- ===============================================================
+         SECTION: Main App Layout Container
+         Purpose: Three-column layout - sidebar (controls), main preview,
+                  and right column (lyrics editor, job status, media vault)
+         =============================================================== -->
+
     <div class="app-layout">
+      <!-- SIDEBAR: Audio Input & Processing Controls -->
       <div class="sidebar">
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionIngestBody', this)">
@@ -454,6 +540,7 @@
           </div>
         </div>
 
+        <!-- Lyrics Fetching Controls -->
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionGrabLyricsBody', this)">
             <span>
@@ -474,6 +561,7 @@
           </div>
         </div>
 
+        <!-- Lyrics Editor & Timing Correction -->
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionStatusBody', this)">
             <span><span class="section-toggle-main">[3] Edit Lyrics</span></span>
@@ -484,7 +572,15 @@
               <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
               <span id="lyricsReadyBadge" class="state-badge state-waiting">Not Ready</span>
             </div>
-            <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()"></textarea>
+            <div class="lyrics-editor-wrap">
+              <div id="lyricsChorusOverlay" class="lyrics-overlay" aria-hidden="true"></div>
+              <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()" onscroll="syncChorusOverlayScroll()"></textarea>
+            </div>
+            <div class="row2" style="margin-top: 8px;">
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to vocalize them in the chorus render. Marked words appear bold.">+ Chorus</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(false)" title="Highlight words in the editor, then click to remove them from the chorus vocals.">− Chorus</button>
+            </div>
+            <div id="chorusMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No words marked for chorus vocals (auto-detect will be used).</div>
             <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted); text-align:center;">Edits save automatically. Timing-mode adjustments update these lyrics live.</div>
             <div class="row2" style="margin-top: 10px;">
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
@@ -503,6 +599,8 @@
               </select>
               <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
             </div>
+            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="clearAllLyricsTiming()" title="Create a new revision with the same lyric words and no timing">Clear All Timing</button>
+            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="shiftAllLyricsTiming(-0.05)" title="Shift every start and end timestamp 0.05s earlier. Creates a new revision each press; press repeatedly to keep nudging.">I'm slow (-00:00.05)</button>
             <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
               <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
               <div style="min-width:0; text-align:center;">
@@ -514,6 +612,7 @@
           </div>
         </div>
 
+        <!-- Video Rendering Controls (Final, Chorus, Preview) -->
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionRenderBody', this)">
             <span>
@@ -536,6 +635,25 @@
             <button class="btn btn-small btn-wide" style="margin-top: 10px" onclick="startRender('chorus')" title="Instrumental audio, but the original vocals play during the detected chorus sections">Render with Chorus</button>
             <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
             <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+          </div>
+        </div>
+
+        <!-- FX Customization Panel (Dynamic) -->
+        <div class="card" id="fxPanelCard" style="display:none">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionFxPanelBody', this)">
+            <span>
+              <span class="section-toggle-main">⚙️ FX Customization</span>
+              <span class="section-toggle-sub" id="fxPanelSubtitle">Select an FX effect to customize options</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionFxPanelBody" class="section-body">
+            <!-- FX options will be dynamically populated here -->
+            <div id="fxPanelContent">
+              <div style="color: var(--text-muted); text-align: center; padding: 20px;">
+                No FX selected. Choose an effect from the FX dropdown to customize it.
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -580,13 +698,17 @@
             <span class="section-toggle-arrow">▾</span>
           </button>
           <div id="sectionLibraryBody" class="section-body">
-            <div id="file-vault" style="max-height: 200px; overflow-y: auto">Scanning files...</div>
+            <div id="file-vault" style="overflow-y: auto; flex: 1;">Scanning files...</div>
             <button class="btn btn-small btn-wide" onclick="loadFileManifest()">Refresh Vault</button>
           </div>
         </div>
       </div>
 
-      <div class="preview-pane" id="previewPane">
+      <div class="preview-pane card" id="previewPane">
+        <div class="section-toggle" style="cursor: grab; user-select: none; padding: 12px; border-bottom: 1px solid var(--border); margin: -16px -16px 12px -16px; background: var(--bg-muted); border-radius: var(--radius) var(--radius) 0 0; display: flex; align-items: center; gap: 8px;">
+          <span style="font-weight: 600; font-size: 14px; flex: 1; color: var(--text-main)">📺 Preview & Adjustments</span>
+          <span class="section-toggle-arrow" style="display: inline-block; transition: transform 0.3s ease; color: var(--text-muted)">▶</span>
+        </div>
 
         <div id="canvas-wrapper">
           <div class="preview-header-overlay">
@@ -637,14 +759,8 @@
 
             <div class="compact-ctrl">
               <span style="color: var(--text-muted)">FX</span>
-              <select id="transitionStyle" onchange="updatePreview()" style="width: 65px">
-                <option value="none">Cut</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
-              </select>
-              <select id="fxScope" onchange="updatePreview()" style="width: 65px" title="Transition Scope">
-                <option value="page">Page</option><option value="line">Line</option><option value="word">Word</option>
-              </select>
-              <select id="fxSpeed" onchange="updatePreview()" style="width: 65px" title="Transition Speed">
-                <option value="0.2">Fast</option><option value="0.6" selected>Med</option><option value="1.2">Slow</option>
+              <select id="transitionStyle" onchange="updatePreview(); updateFxPanel();" style="width: 65px">
+                <option value="none">None</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
               </select>
             </div>
 
@@ -654,7 +770,7 @@
                 <option value="none">Flat</option><option value="shadow">Shadow</option><option value="hard-shadow">Hard Drop</option><option value="glow">Glow</option><option value="neon">Neon</option>
               </select>
               <select id="revealMode" onchange="updatePreview()" style="width: 75px" title="Reveal Mode">
-                <option value="block" selected>Block</option><option value="continuous">Scroll</option><option value="eager">Eager</option>
+                <option value="continuous" selected>Scroll</option><option value="block">Block</option><option value="eager">Eager</option>
               </select>
               <select id="previewLineCount" onchange="updatePreview()" style="width: 50px">
                 <option value="2">2 Lns</option><option value="3" selected>3 Lns</option><option value="4">4 Lns</option>
@@ -1144,21 +1260,21 @@
   <circle cx="330" cy="190" r="55" fill="${placeholderPaper}" fill-opacity="0.15"/>
   <circle cx="1030" cy="170" r="34" fill="${placeholderPaper}" fill-opacity="0.13"/>
   <circle cx="940" cy="560" r="62" fill="${placeholderPaper}" fill-opacity="0.12"/>
-  
+
   <!-- Microphone -->
   <g transform="translate(640, 320)" class="mic-body">
     <!-- Mic head (circular grille) -->
     <circle cx="0" cy="-60" r="45" fill="none" stroke="${placeholderPaper}" stroke-width="3" opacity="0.95"/>
     <circle cx="0" cy="-60" r="40" fill="none" stroke="${placeholderPaper}" stroke-width="2" opacity="0.8"/>
     <circle cx="0" cy="-60" r="35" fill="none" stroke="${placeholderPaper}" stroke-width="1" opacity="0.7"/>
-    
+
     <!-- Mic neck/stand -->
     <rect x="-8" y="-15" width="16" height="85" rx="8" fill="${placeholderPaper}" opacity="0.9"/>
-    
+
     <!-- Mic base -->
     <ellipse cx="0" cy="75" rx="55" ry="25" fill="${placeholderPaper}" opacity="0.85"/>
     <ellipse cx="0" cy="75" rx="50" ry="20" fill="${placeholderAccent}" opacity="0.7"/>
-    
+
     <!-- Music notes floating up -->
     <g transform="translate(-40, -80)" class="music-note" style="animation-name: float-note-1; animation-delay: 0s;">
       <path d="M 0 0 Q 5 -8 8 -15 Q 3 -12 0 -10 Z" fill="${placeholderWarning}" opacity="0.95"/>
@@ -1181,7 +1297,7 @@
       <circle cx="8" cy="5" r="5" fill="${placeholderWarning}" opacity="0.95"/>
     </g>
   </g>
-  
+
   <text x="640" y="500" text-anchor="middle" font-size="52" font-family="Segoe UI, Arial, sans-serif" font-weight="800" fill="${placeholderPaper}">KARAOKE</text>
   <text x="640" y="555" text-anchor="middle" font-size="24" font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="${placeholderPaper}" fill-opacity="0.85">Ready to Rock!</text>
 </svg>`;
@@ -1203,10 +1319,10 @@
         const w = canvas.width;
         const h = canvas.height;
         const originalFrame = ctx.getImageData(0, 0, w, h);
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
-          
+
           if (progress < 1) {
             ctx.clearRect(0, 0, w, h);
             ctx.globalAlpha = progress;
@@ -1226,27 +1342,27 @@
         const w = canvas.width;
         const h = canvas.height;
         const originalFrame = ctx.getImageData(0, 0, w, h);
-        
+
         const directions = { left: -1, right: 1, top: -1, bottom: 1 };
         const isHorizontal = direction === 'left' || direction === 'right';
         const dirValue = directions[direction] || -1;
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
           const offset = isHorizontal ? w * (1 - progress) * dirValue : h * (1 - progress) * dirValue;
-          
+
           ctx.clearRect(0, 0, w, h);
           ctx.save();
-          
+
           if (isHorizontal) {
             ctx.translate(offset, 0);
           } else {
             ctx.translate(0, offset);
           }
-          
+
           ctx.putImageData(originalFrame, 0, 0);
           ctx.restore();
-          
+
           if (progress < 1) {
             requestAnimationFrame(frame);
           } else {
@@ -1262,21 +1378,21 @@
         const w = canvas.width;
         const h = canvas.height;
         const originalFrame = ctx.getImageData(0, 0, w, h);
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
           const shimmerPos = progress * w * 2 - w;
-          
+
           ctx.putImageData(originalFrame, 0, 0);
-          
+
           const gradient = ctx.createLinearGradient(shimmerPos, 0, shimmerPos + w * 0.3, 0);
           gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
           gradient.addColorStop(0.5, `rgba(255, 255, 255, ${0.3 * (1 - progress)})`);
           gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-          
+
           ctx.fillStyle = gradient;
           ctx.fillRect(0, 0, w, h);
-          
+
           if (progress < 1) {
             requestAnimationFrame(frame);
           } else {
@@ -1293,23 +1409,23 @@
         const cx = w / 2;
         const cy = h / 2;
         const originalFrame = ctx.getImageData(0, 0, w, h);
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
           const maxRadius = Math.sqrt(cx * cx + cy * cy);
           const radius = maxRadius * progress;
-          
+
           ctx.clearRect(0, 0, w, h);
-          
+
           ctx.save();
           ctx.globalCompositeOperation = 'destination-in';
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
-          
+
           ctx.putImageData(originalFrame, 0, 0);
-          
+
           if (progress < 1) {
             requestAnimationFrame(frame);
           } else {
@@ -1329,20 +1445,20 @@
         const cols = Math.ceil(w / blockSize);
         const rows = Math.ceil(h / blockSize);
         const totalBlocks = cols * rows;
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
           const blocksToShow = Math.floor(progress * totalBlocks);
-          
+
           ctx.putImageData(originalFrame, 0, 0);
-          
+
           ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
           for (let i = blocksToShow; i < totalBlocks; i++) {
             const row = Math.floor(i / cols);
             const col = i % cols;
             ctx.fillRect(col * blockSize, row * blockSize, blockSize, blockSize);
           }
-          
+
           if (progress < 1) {
             requestAnimationFrame(frame);
           } else {
@@ -1358,22 +1474,22 @@
         const w = canvas.width;
         const h = canvas.height;
         const originalFrame = ctx.getImageData(0, 0, w, h);
-        
+
         function frame(currentTime) {
           const progress = Math.min(1, (currentTime - startTime) / duration);
           const wavePos = progress * (w + h);
-          
+
           ctx.putImageData(originalFrame, 0, 0);
-          
+
           const gradient = ctx.createLinearGradient(wavePos - h * 0.5, 0, wavePos + h * 0.5, 0);
           gradient.addColorStop(0, 'rgba(0, 0, 0, 0.8)');
           gradient.addColorStop(0.3, 'rgba(0, 0, 0, 0.4)');
           gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.4)');
           gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)');
-          
+
           ctx.fillStyle = gradient;
           ctx.fillRect(wavePos - h, 0, h * 2, h);
-          
+
           if (progress < 1) {
             requestAnimationFrame(frame);
           } else {
@@ -1387,13 +1503,13 @@
       function playThemeAnimation() {
         if (themeAnimationActive) return;
         themeAnimationActive = true;
-        
+
         const canvas = document.getElementById("videoCanvas");
         if (!canvas) return;
-        
+
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        
+
         const animations = [
           () => animateThemeFadeIn(canvas, ctx, 1500),
           () => animateThemeSlideIn(canvas, ctx, 1500, ['left', 'right', 'top', 'bottom'][Math.floor(Math.random() * 4)]),
@@ -1402,7 +1518,7 @@
           () => animateThemePopIn(canvas, ctx, 1500),
           () => animateThemeWave(canvas, ctx, 1800)
         ];
-        
+
         const randomAnimation = animations[Math.floor(Math.random() * animations.length)];
         randomAnimation();
       }
@@ -1437,10 +1553,10 @@
         const history = getLyricsRevisionHistory(audioFilename);
         const last = history.length ? history[history.length - 1] : null;
         if (last && last.content === text && !metadata.allowDuplicate) return;
-        
+
         // Detect timing level from content
         const timingLevel = detectLyricsTimingLevel(content);
-        
+
         const entry = {
           content: text,
           reason,
@@ -1484,6 +1600,304 @@
         updateLyricsRevisionMeta();
       }
 
+      async function clearAllLyricsTiming() {
+        if (!selectedAudioFilename || !selectedLrcFilename) {
+          setStatus("Select source media first.", true);
+          return;
+        }
+        const editor = document.getElementById("lyricsEditor");
+        const timedContent = editor.value || "";
+        const untimedContent = timedContent
+          .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, "")
+          .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, "")
+          .split("\n")
+          .map((line) => line.trim())
+          .join("\n");
+        if (timedContent === untimedContent) {
+          setStatus("This revision has no timing to clear.");
+          return;
+        }
+
+        if (lyricsEditorSaveTimer) clearTimeout(lyricsEditorSaveTimer);
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        const activeIndex = _getRevisionCursor(selectedAudioFilename);
+        if (!history[activeIndex] || history[activeIndex].content !== timedContent) {
+          addLyricsRevision(selectedAudioFilename, timedContent, "timing source", {
+            isNew: false,
+            isCustomized: true,
+            timingLevel: detectLyricsTimingLevel(timedContent),
+            timestampCount: countTimestamps(timedContent),
+          });
+        }
+        addLyricsRevision(selectedAudioFilename, untimedContent, "timing cleared", {
+          isNew: false,
+          isCustomized: true,
+          timingLevel: 0,
+          timestampCount: 0,
+        });
+
+        editor.value = untimedContent;
+        lastCommittedLyricsText = untimedContent;
+        manualTimingState.words = extractWordsFromEditor();
+        manualTimingState.baselineEntries = [];
+        manualTimingState.entries = [];
+        manualTimingState.cursor = 0;
+        manualTimingState.activeStart = null;
+        manualTimingState.previewFromAppliedLyrics = true;
+        manualTimingState.revisionIndex = null;
+        parseLrcData(untimedContent);
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+
+        try {
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", untimedContent);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "Lyrics save failed.");
+          await autoSaveManualTimingDraft();
+          setStatus("Created a new revision with all timing cleared.");
+        } catch (err) {
+          setStatus(`Failed to clear timing: ${err}`, true);
+        }
+      }
+
+      function _formatLrcStamp(totalSeconds) {
+        // LRC stamps are mm:ss.xx (hundredths). Minutes are not wrapped at 60 so
+        // long tracks stay monotonic.
+        const safe = Math.max(0, totalSeconds);
+        const mins = Math.floor(safe / 60);
+        const secs = safe - mins * 60;
+        const wholeSecs = Math.floor(secs);
+        const hundredths = Math.round((secs - wholeSecs) * 100);
+        let m = mins, s = wholeSecs, cs = hundredths;
+        if (cs >= 100) { cs -= 100; s += 1; }
+        if (s >= 60) { s -= 60; m += 1; }
+        return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+      }
+
+      function shiftLyricsTimestamps(content, deltaSeconds) {
+        // Shift both line-level [mm:ss.xx] and word-level <mm:ss.xx> stamps.
+        // Timestamps are clamped at 0 so a shift can never go negative.
+        const shift = (match, mm, ss, frac, open, close) => {
+          const fracStr = frac === undefined ? "0" : String(frac);
+          // A 3-digit fraction is milliseconds, otherwise hundredths.
+          const fracSec = fracStr.length === 3
+            ? Number(fracStr) / 1000
+            : Number(fracStr.padEnd(2, "0")) / 100;
+          const total = Number(mm) * 60 + Number(ss) + fracSec;
+          return `${open}${_formatLrcStamp(total + deltaSeconds)}${close}`;
+        };
+        return content
+          .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, (_m, mm, ss, frac) => shift(_m, mm, ss, frac, "[", "]"))
+          .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, (_m, mm, ss, frac) => shift(_m, mm, ss, frac, "<", ">"));
+      }
+
+      async function shiftAllLyricsTiming(deltaSeconds) {
+        if (!selectedAudioFilename || !selectedLrcFilename) {
+          setStatus("Select source media first.", true);
+          return;
+        }
+        const editor = document.getElementById("lyricsEditor");
+        const currentContent = editor.value || "";
+        if (!/\[\d+:\d+(?:\.\d{1,3})?\]|<\d+:\d+(?:\.\d{1,3})?>/.test(currentContent)) {
+          setStatus("This revision has no timing to shift.", true);
+          return;
+        }
+        const shiftedContent = shiftLyricsTimestamps(currentContent, deltaSeconds);
+        if (shiftedContent === currentContent) {
+          setStatus("All timestamps are already at 0:00; nothing to shift.", true);
+          return;
+        }
+
+        if (lyricsEditorSaveTimer) clearTimeout(lyricsEditorSaveTimer);
+        // Preserve the pre-shift text as its own revision if it isn't recorded yet,
+        // so repeated presses remain individually undoable.
+        const history = getLyricsRevisionHistory(selectedAudioFilename);
+        const activeIndex = _getRevisionCursor(selectedAudioFilename);
+        if (!history[activeIndex] || history[activeIndex].content !== currentContent) {
+          addLyricsRevision(selectedAudioFilename, currentContent, "timing source", {
+            isNew: false,
+            isCustomized: true,
+            timingLevel: detectLyricsTimingLevel(currentContent),
+            timestampCount: countTimestamps(currentContent),
+          });
+        }
+
+        const sign = deltaSeconds < 0 ? "-" : "+";
+        const label = `Universal ${sign}${_formatLrcStamp(Math.abs(deltaSeconds))} timing`;
+        addLyricsRevision(selectedAudioFilename, shiftedContent, label, {
+          isNew: false,
+          isCustomized: true,
+          timingLevel: detectLyricsTimingLevel(shiftedContent),
+          timestampCount: countTimestamps(shiftedContent),
+          allowDuplicate: true,
+        });
+
+        editor.value = shiftedContent;
+        lastCommittedLyricsText = shiftedContent;
+        // The shifted text becomes the new baseline for manual S/F capture.
+        manualTimingState.words = extractWordsFromEditor();
+        manualTimingState.baselineEntries = [];
+        manualTimingState.entries = [];
+        manualTimingState.cursor = 0;
+        manualTimingState.activeStart = null;
+        manualTimingState.previewFromAppliedLyrics = true;
+        manualTimingState.revisionIndex = null;
+        parseLrcData(shiftedContent);
+        persistManualTiming();
+        updateManualTimingHud();
+        updatePreview();
+
+        try {
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", shiftedContent);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "Lyrics save failed.");
+          await autoSaveManualTimingDraft();
+          setStatus(`Created a new revision: ${label}.`);
+        } catch (err) {
+          setStatus(`Failed to shift timing: ${err}`, true);
+        }
+      }
+
+      // ================================================================
+      // SECTION: Chorus Word Marking
+      // Purpose: Let the user select words in the lyrics editor and mark them
+      //          as chorus vocals. Marked words are stored in the LRC as
+      //          [00:12.34]*word and rendered bold via an overlay, then used to
+      //          rebuild the vocalized chorus mp3 at chorus-render time.
+      // ================================================================
+
+      const CHORUS_LINE_RE = /^(\s*\[\d+:\d+(?:\.\d{1,3})?\])(\s*\*)?(.*)$/;
+
+      // The editor's value is assigned programmatically from many places
+      // (revision switching, project load, auto-correct, transcription...).
+      // Patching the property once keeps the bold overlay in sync everywhere
+      // instead of requiring a call after every assignment.
+      function installChorusOverlayHook() {
+        const editor = document.getElementById("lyricsEditor");
+        if (!editor || editor._chorusHooked) return;
+        const proto = Object.getPrototypeOf(editor);
+        const desc = Object.getOwnPropertyDescriptor(proto, "value");
+        if (!desc || !desc.set) return;
+        Object.defineProperty(editor, "value", {
+          get() { return desc.get.call(this); },
+          set(v) {
+            desc.set.call(this, v);
+            try { renderChorusOverlay(); } catch (_) {}
+          },
+          configurable: true,
+        });
+        editor._chorusHooked = true;
+        renderChorusOverlay();
+      }
+
+      function setLineChorusMark(line, marked) {
+        const m = line.match(CHORUS_LINE_RE);
+        if (!m) return line;              // untimed line: nothing to mark
+        if (!m[3].trim()) return line;    // no lyric text on this line
+        return marked ? `${m[1]}*${m[3]}` : `${m[1]}${m[3]}`;
+      }
+
+      function isLineChorusMarked(line) {
+        const m = line.match(CHORUS_LINE_RE);
+        return !!(m && m[2]);
+      }
+
+      function escapeHtml(text) {
+        return String(text).replace(/[&<>"']/g, (c) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      function renderChorusOverlay() {
+        const editor = document.getElementById("lyricsEditor");
+        const overlay = document.getElementById("lyricsChorusOverlay");
+        if (!editor || !overlay) return;
+        const html = (editor.value || "").split("\n").map((line) =>
+          isLineChorusMarked(line)
+            ? `<span class="chorus-on">${escapeHtml(line)}</span>`
+            : escapeHtml(line)
+        ).join("\n");
+        // Trailing newline needs a filler so the last line stays scrollable.
+        overlay.innerHTML = html + "\n";
+        syncChorusOverlayScroll();
+        updateChorusMarkInfo();
+      }
+
+      function syncChorusOverlayScroll() {
+        const editor = document.getElementById("lyricsEditor");
+        const overlay = document.getElementById("lyricsChorusOverlay");
+        if (!editor || !overlay) return;
+        overlay.scrollTop = editor.scrollTop;
+        overlay.scrollLeft = editor.scrollLeft;
+      }
+
+      function updateChorusMarkInfo() {
+        const info = document.getElementById("chorusMarkInfo");
+        if (!info) return;
+        const editor = document.getElementById("lyricsEditor");
+        const count = (editor?.value || "").split("\n").filter(isLineChorusMarked).length;
+        info.textContent = count
+          ? `${count} word${count === 1 ? "" : "s"} marked for chorus vocals.`
+          : "No words marked for chorus vocals (auto-detect will be used).";
+      }
+
+      async function markSelectionChorus(marked) {
+        if (!selectedAudioFilename || !selectedLrcFilename) {
+          setStatus("Select source media first.", true);
+          return;
+        }
+        const editor = document.getElementById("lyricsEditor");
+        const value = editor.value || "";
+        let start = editor.selectionStart;
+        let end = editor.selectionEnd;
+        if (start === end) {
+          setStatus("Highlight the words in the editor first.", true);
+          return;
+        }
+        // Expand the selection outward to whole lines: each LRC line carries one
+        // word plus its timestamps, so partial selections must still mark the
+        // entire word they touch.
+        const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+        let lineEnd = value.indexOf("\n", end - 1);
+        if (lineEnd === -1) lineEnd = value.length;
+
+        const before = value.slice(0, lineStart);
+        const target = value.slice(lineStart, lineEnd);
+        const after = value.slice(lineEnd);
+        const updatedBlock = target.split("\n").map((l) => setLineChorusMark(l, marked)).join("\n");
+        if (updatedBlock === target) {
+          setStatus(marked ? "Those words are already in the chorus." : "Those words were not in the chorus.");
+          return;
+        }
+        const updated = before + updatedBlock + after;
+
+        editor.value = updated;
+        // Keep the user's highlight so they can immediately press the other button.
+        editor.setSelectionRange(lineStart, lineStart + updatedBlock.length);
+        renderChorusOverlay();
+        updateTimingRevision(updated);
+        lastCommittedLyricsText = updated;
+
+        const changed = updatedBlock.split("\n").filter((l, i) => l !== target.split("\n")[i]).length;
+        try {
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", updated);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "Lyrics save failed.");
+          setStatus(`${marked ? "Added" : "Removed"} ${changed} word${changed === 1 ? "" : "s"} ${marked ? "to" : "from"} the chorus vocals. Render with Chorus to hear it.`);
+        } catch (err) {
+          setStatus(`Failed to update chorus marks: ${err}`, true);
+        }
+      }
+
       function detectLyricsTimingLevel(content) {
         /*
         Detect timing level of lyrics content:
@@ -1494,10 +1908,10 @@
         */
         const lines = String(content || "").split("\n");
         if (lines.length === 0) return 0;
-        
+
         let timestampCounts = [];
         let totalTimestamps = 0;
-        
+
         for (const line of lines) {
           const lineTimestamps = (line.match(/\[\d+:\d+(?:\.\d+)?\]/g) || []).length;
           if (lineTimestamps > 0) {
@@ -1505,11 +1919,11 @@
             totalTimestamps += lineTimestamps;
           }
         }
-        
+
         if (totalTimestamps === 0) return 0; // No timing
-        
+
         const avgTimestampsPerLine = totalTimestamps / Math.max(1, timestampCounts.length);
-        
+
         if (avgTimestampsPerLine >= 4 && totalTimestamps >= 20) {
           return 3; // Syllable-level
         } else if (avgTimestampsPerLine >= 1.5 && totalTimestamps >= 10) {
@@ -1543,7 +1957,7 @@
         if (entry.isCustomized) badges.push("✏️ Customized");
         if (badges.length > 0) parts.push(badges.join(" | "));
         if (entry.provider) parts.push(`Source: ${entry.provider}`);
-        
+
         // Add timing level info
         if (entry.timingLevel !== undefined) {
           const timingNames = { 3: "🎵 Syllable", 2: "🎶 Word", 1: "📄 Line", 0: "⏳ No timing" };
@@ -1551,7 +1965,7 @@
           const timeStampInfo = entry.timestampCount ? ` (${entry.timestampCount} timestamps)` : "";
           parts.push(`Timing: ${timingDesc}${timeStampInfo}`);
         }
-        
+
         if (Math.abs((entry.modifiedAt || entry.at) - (entry.at || Date.now())) > 60000) parts.push(`Modified: ${modDt.toLocaleString()}`);
         return parts.join(" | ");
       }
@@ -1592,7 +2006,13 @@
         lyricsRevisionCursorByAudio[audioFilename] = clamped;
         document.getElementById("lyricsEditor").value = target.content || "";
         parseLrcData(target.content || "");
-        manualTimingState.previewFromAppliedLyrics = true;
+        manualTimingState.words = extractWordsFromEditor();
+        manualTimingState.baselineEntries = buildTimedWordEntriesFromLyrics();
+        manualTimingState.entries = [];
+        manualTimingState.cursor = 0;
+        manualTimingState.activeStart = null;
+        manualTimingState.previewFromAppliedLyrics = manualTimingState.baselineEntries.length > 0;
+        manualTimingState.revisionIndex = null;
         persistManualTiming();
         updateManualTimingHud();
         updateLyricsRevisionMeta();
@@ -1647,6 +2067,362 @@
 
       function onFontSizeChanged() { updatePreview(); }
 
+      // ================================================================
+      // SECTION: Dynamic FX Panel Management
+      // Purpose: Populate FX customization options based on selected effect
+      //          including Scope, Speed, and effect-specific parameters
+      // ================================================================
+
+      // FX Scope/Speed live inside the dynamically rebuilt FX panel, so they are
+      // absent from the DOM whenever FX is "none". These module-level caches are
+      // the source of truth so render payloads never crash on a missing element.
+      let fxScopeState = "page";
+      let fxSpeedState = "0.6";
+
+      function getFxScope() {
+        const el = document.getElementById("fxScope");
+        if (el && el.value) fxScopeState = el.value;
+        return fxScopeState;
+      }
+
+      function getFxSpeed() {
+        const el = document.getElementById("fxSpeed");
+        if (el && el.value) fxSpeedState = el.value;
+        return fxSpeedState;
+      }
+
+      function setFxScope(value) {
+        if (!value) return;
+        fxScopeState = String(value);
+        const el = document.getElementById("fxScope");
+        if (el) el.value = fxScopeState;
+      }
+
+      function setFxSpeed(value) {
+        if (value === undefined || value === null || value === "") return;
+        fxSpeedState = String(value);
+        const el = document.getElementById("fxSpeed");
+        if (el) el.value = fxSpeedState;
+      }
+
+      // Build FX Customization Panel based on selected effect
+      function updateFxPanel() {
+        const fxSelect = document.getElementById("transitionStyle");
+        const selectedFx = fxSelect ? fxSelect.value : "none";
+        const panelBody = document.getElementById("sectionFxPanelBody");
+        const panelContent = document.getElementById("fxPanelContent");
+        const panelCard = document.getElementById("fxPanelCard");
+        const subtitle = document.getElementById("fxPanelSubtitle");
+
+        if (!panelBody || !panelContent) return;
+
+        // Hide the whole card when no FX is selected, rather than only the body,
+        // so an empty titled panel doesn't occupy sidebar space.
+        if (selectedFx === "none") {
+          if (panelCard) panelCard.style.display = "none";
+          if (subtitle) subtitle.textContent = "Select an FX effect to customize options";
+          return;
+        }
+
+        if (panelCard) panelCard.style.display = "";
+        
+        // Common FX header controls (Scope + Speed apply to all effects)
+        const commonControls = `
+          <div class="compact-ctrl" style="border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;">
+            <span style="color: var(--text-muted)">Scope</span>
+            <select id="fxScope" onchange="updatePreview()" style="width: 65px" title="Transition Scope">
+              <option value="page">Page</option><option value="line">Line</option><option value="word">Word</option>
+            </select>
+            <span style="color: var(--text-muted); margin-left: 10px">Speed</span>
+            <select id="fxSpeed" onchange="updatePreview()" style="width: 65px" title="Transition Speed">
+              <option value="0.2">Fast</option><option value="0.6" selected>Med</option><option value="1.2">Slow</option>
+            </select>
+          </div>
+        `;
+        
+        // Build FX-specific controls
+        let html = commonControls;
+        let fxTitle = "";
+
+        switch(selectedFx) {
+          case "bouncing-ball":
+            fxTitle = "Bouncing Ball Options";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Ball Radius">
+                <span style="color: var(--text-muted)">Ball Size</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('ballRadius', 1, 10, 200, 'ballRadiusNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('ballRadius', -1, 10, 200, 'ballRadiusNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="ballRadius" value="26" />
+                <input type="number" id="ballRadiusNum" min="10" max="100" value="26" oninput="document.getElementById('ballRadius').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+              <div class="compact-ctrl" title="Arc Height">
+                <span style="color: var(--text-muted)">Arc Height</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('arcHeight', 1, 20, 500, 'arcHeightNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('arcHeight', -1, 20, 500, 'arcHeightNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="arcHeight" value="78" />
+                <input type="number" id="arcHeightNum" min="20" max="500" value="78" oninput="document.getElementById('arcHeight').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+              <div class="compact-ctrl" title="Arc Fraction (0.0-1.0)">
+                <span style="color: var(--text-muted)">Arc Timing</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('arcFraction', 0.05, 0, 1, 'arcFractionNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('arcFraction', -0.05, 0, 1, 'arcFractionNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="arcFraction" value="0.35" />
+                <input type="number" id="arcFractionNum" min="0" max="1" step="0.05" value="0.35" oninput="document.getElementById('arcFraction').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+              <div class="compact-ctrl" title="Bounces Per Second During Gaps">
+                <span style="color: var(--text-muted)">Bounce Freq</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', 0.05, 0.05, 0.5, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', -0.05, 0.05, 0.5, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="bouncePerSec" value="0.1" />
+                <input type="number" id="bouncePerSecNum" min="0.05" max="0.5" step="0.05" value="0.1" oninput="document.getElementById('bouncePerSec').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Colors</span>
+                <label style="font-size: 10px; color: var(--text-muted); margin-left: 5px">Ball:</label>
+                <input type="color" id="ballColor" value="#ffffff" title="Ball Color" oninput="updatePreview()" style="width: 30px; height: 24px; cursor: pointer;" />
+                <label style="font-size: 10px; color: var(--text-muted); margin-left: 8px">Outline:</label>
+                <input type="color" id="ballOutlineColor" value="#000000" title="Ball Outline Color" oninput="updatePreview()" style="width: 30px; height: 24px; cursor: pointer;" />
+              </div>
+            `;
+            break;
+
+          case "fade":
+            fxTitle = "Fade Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Fade intensity/opacity">
+                <span style="color: var(--text-muted)">Fade Amount</span>
+                <select id="fadeIntensity" onchange="updatePreview()" style="width: 70px">
+                  <option value="light">Light</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="heavy">Heavy</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Fade in/out with adjustable intensity
+              </div>
+            `;
+            break;
+
+          case "zoom":
+            fxTitle = "Zoom Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Zoom scale range">
+                <span style="color: var(--text-muted)">Zoom Scale</span>
+                <select id="zoomScale" onchange="updatePreview()" style="width: 70px">
+                  <option value="subtle">Subtle</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="dramatic">Dramatic</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Zoom in/out effect at various scales
+              </div>
+            `;
+            break;
+
+          case "blur":
+            fxTitle = "Blur Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Blur radius">
+                <span style="color: var(--text-muted)">Blur Amount</span>
+                <select id="blurAmount" onchange="updatePreview()" style="width: 70px">
+                  <option value="5">Subtle</option>
+                  <option value="10" selected>Medium</option>
+                  <option value="20">Heavy</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Blur in/out transition effect
+              </div>
+            `;
+            break;
+
+          case "rotate-360":
+            fxTitle = "360 Rotate Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Rotation direction">
+                <span style="color: var(--text-muted)">Direction</span>
+                <select id="rotateDirection" onchange="updatePreview()" style="width: 70px">
+                  <option value="cw" selected>Clockwise</option>
+                  <option value="ccw">Counter-CW</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Full 360° rotation effect
+              </div>
+            `;
+            break;
+
+          case "glimmer":
+            fxTitle = "Glimmer Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Glimmer brightness">
+                <span style="color: var(--text-muted)">Intensity</span>
+                <select id="glimmerIntensity" onchange="updatePreview()" style="width: 70px">
+                  <option value="soft">Soft</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="bright">Bright</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Sparkle/glimmer shine effect
+              </div>
+            `;
+            break;
+
+          case "shake":
+            fxTitle = "Shake Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Shake intensity">
+                <span style="color: var(--text-muted)">Intensity</span>
+                <select id="shakeIntensity" onchange="updatePreview()" style="width: 70px">
+                  <option value="small">Subtle</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="strong">Strong</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Vibration/jitter effect
+              </div>
+            `;
+            break;
+
+          case "flip":
+            fxTitle = "Flip Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Flip direction">
+                <span style="color: var(--text-muted)">Direction</span>
+                <select id="flipDirection" onchange="updatePreview()" style="width: 70px">
+                  <option value="horizontal" selected>Horizontal</option>
+                  <option value="vertical">Vertical</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 3D flip animation
+              </div>
+            `;
+            break;
+
+          case "pulse":
+            fxTitle = "Pulse Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Pulse intensity">
+                <span style="color: var(--text-muted)">Intensity</span>
+                <select id="pulseIntensity" onchange="updatePreview()" style="width: 70px">
+                  <option value="subtle">Subtle</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="strong">Strong</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Expand/contract heartbeat effect
+              </div>
+            `;
+            break;
+
+          case "sway":
+            fxTitle = "Sway Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Sway amount">
+                <span style="color: var(--text-muted)">Amount</span>
+                <select id="swayAmount" onchange="updatePreview()" style="width: 70px">
+                  <option value="slight">Slight</option>
+                  <option value="normal" selected>Normal</option>
+                  <option value="extreme">Extreme</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Side-to-side swaying motion
+              </div>
+            `;
+            break;
+
+          case "skew":
+            fxTitle = "Skew Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Skew direction">
+                <span style="color: var(--text-muted)">Direction</span>
+                <select id="skewDirection" onchange="updatePreview()" style="width: 70px">
+                  <option value="x" selected>Horizontal</option>
+                  <option value="y">Vertical</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 3D perspective skew effect
+              </div>
+            `;
+            break;
+
+          case "stamp":
+            fxTitle = "Stamp Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Stamp style">
+                <span style="color: var(--text-muted)">Style</span>
+                <select id="stampStyle" onchange="updatePreview()" style="width: 70px">
+                  <option value="punch" selected>Punch</option>
+                  <option value="fade">Fade</option>
+                  <option value="bounce">Bounce</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Sudden appearance with style
+              </div>
+            `;
+            break;
+
+          case "focus":
+            fxTitle = "Focus Effect";
+            html = commonControls + `
+              <div class="compact-ctrl" title="Focus zoom level">
+                <span style="color: var(--text-muted)">Zoom Level</span>
+                <select id="focusZoom" onchange="updatePreview()" style="width: 70px">
+                  <option value="1.2">Subtle</option>
+                  <option value="1.5" selected>Normal</option>
+                  <option value="2.0">Dramatic</option>
+                </select>
+              </div>
+              <div style="color: var(--text-muted); font-size: 11px; margin-top: 8px; padding: 8px; background: rgba(100,200,255,0.1); border-radius: 4px;">
+                💡 Zoom and dim surroundings
+              </div>
+            `;
+            break;
+
+          default:
+            // For other effects like "pop", "slide", "drop", "none"
+            html = commonControls + `
+              <div style="color: var(--text-muted); font-size: 11px; padding: 12px; background: rgba(100,200,255,0.1); border-radius: 4px; text-align: center;">
+                ${selectedFx.charAt(0).toUpperCase() + selectedFx.slice(1)} effect selected. Limited customization available.
+              </div>
+            `;
+        }
+
+        subtitle.textContent = fxTitle;
+
+        // Preserve current fxScope/fxSpeed before the DOM nodes are destroyed.
+        // These live inside the dynamic panel, so cache them in module state to
+        // survive both FX switches and the "none" case where they don't exist.
+        fxScopeState = document.getElementById("fxScope")?.value || fxScopeState;
+        fxSpeedState = document.getElementById("fxSpeed")?.value || fxSpeedState;
+
+        panelContent.innerHTML = html;
+
+        // Restore fxScope and fxSpeed values after HTML is inserted
+        const newFxScope = document.getElementById("fxScope");
+        const newFxSpeed = document.getElementById("fxSpeed");
+        if (newFxScope) newFxScope.value = fxScopeState;
+        if (newFxSpeed) newFxSpeed.value = fxSpeedState;
+      }
+
+      // Listen for FX changes and update panel
+      document.addEventListener("DOMContentLoaded", () => {
+        const fxSelect = document.getElementById("transitionStyle");
+        if (fxSelect) {
+          fxSelect.addEventListener("change", updateFxPanel);
+        }
+        installChorusOverlayHook();
+      });
+
       function getThemeStorageKey() {
         return "onepage-karaoke-theme-id";
       }
@@ -1680,7 +2456,7 @@
         drawVocalWaveform();
         updateThemeMeta(theme);
         if (persist) localStorage.setItem(getThemeStorageKey(), theme.id);
-        
+
         // Play theme animation when theme is manually selected (persist = true)
         if (persist) {
           setTimeout(() => playThemeAnimation(), 50);
@@ -1826,14 +2602,20 @@
           bg_type: document.getElementById("bgType").value,
           bg_color: document.getElementById("bgColor").value,
           transition_style: document.getElementById("transitionStyle").value,
-          fx_scope: document.getElementById("fxScope").value,
-          fx_speed: document.getElementById("fxSpeed").value,
+          fx_scope: getFxScope(),
+          fx_speed: getFxSpeed(),
           text_effect: document.getElementById("textEffect").value,
           reveal_mode: document.getElementById("revealMode").value,
           preview_line_count: document.getElementById("previewLineCount").value,
           pitch: document.getElementById("pitch").value,
           volume: document.getElementById("volume").value,
           render_device: document.getElementById("renderDevice").value,
+          ball_radius: document.getElementById("ballRadius")?.value || "26",
+          arc_height: document.getElementById("arcHeight")?.value || "78",
+          arc_fraction: document.getElementById("arcFraction")?.value || "0.35",
+          bounce_per_sec: document.getElementById("bouncePerSec")?.value || "0.1",
+          ball_color: document.getElementById("ballColor")?.value || "#ffffff",
+          ball_outline_color: document.getElementById("ballOutlineColor")?.value || "#000000",
         };
       }
 
@@ -1869,100 +2651,86 @@
         controlStepState = null;
       }
 
+      // ================================================================
+      // SECTION: (DISABLED) Panel Dragging & Reordering
+      // Purpose: Was used to allow panels to be dragged/reordered
+      //          Currently disabled - panels stay in fixed grid layout
+      // ================================================================
+
       function enablePanelDragging() {
-        // Cards reorder (push siblings aside) within their own container instead of free-floating and overlapping.
-        // Only the title bar starts a drag; the native corner handle stays dedicated to resizing, and a plain
-        // click on the title bar still toggles the section since drag only engages past a movement threshold.
-        const groups = [
-          Array.from(document.querySelectorAll(".app-layout > .card")),
-          Array.from(document.querySelectorAll(".top-panels > .card")),
-        ];
+        // Enable dragging for all cards by their title bar (.section-toggle)
+        // Panels can be dragged freely but won't stack on top of each other
+        const allPanels = Array.from(document.querySelectorAll(".card"));
         const dragThreshold = 6;
+        let maxZIndex = 10000;
+        const panelZIndices = new Map();
 
-        groups.forEach((group) => {
-          group.forEach((panel) => {
-            const handle = panel.querySelector(":scope > .section-toggle");
-            if (!handle) return;
-            handle.addEventListener("click", (event) => {
-              if (handle.dataset.justDragged === "1") {
-                delete handle.dataset.justDragged;
-                event.preventDefault();
-                event.stopImmediatePropagation();
+        allPanels.forEach((panel) => {
+          panelZIndices.set(panel, 1000 + allPanels.indexOf(panel));
+        });
+
+        allPanels.forEach((panel) => {
+          const handle = panel.querySelector(":scope > .section-toggle");
+          if (!handle) return;
+          
+          handle.addEventListener("click", (event) => {
+            if (handle.dataset.justDragged === "1") {
+              delete handle.dataset.justDragged;
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            }
+          }, true);
+          
+          handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0) return;
+            const startRect = panel.getBoundingClientRect();
+            const pointerOffsetX = event.clientX - startRect.left;
+            const pointerOffsetY = event.clientY - startRect.top;
+            const startX = event.clientX;
+            const startY = event.clientY;
+            let dragging = false;
+
+            const beginDrag = () => {
+              dragging = true;
+              handle.setPointerCapture(event.pointerId);
+              document.body.classList.add("panel-drag-active");
+              panel.classList.add("panel-dragging");
+              panel.style.position = "fixed";
+              panel.style.left = `${startRect.left}px`;
+              panel.style.top = `${startRect.top}px`;
+              panel.style.width = `${startRect.width}px`;
+              
+              // Increment z-index so this panel comes to front, don't stack
+              maxZIndex += 1;
+              panelZIndices.set(panel, maxZIndex);
+              panel.style.zIndex = maxZIndex;
+            };
+
+            const move = (moveEvent) => {
+              if (!dragging) {
+                if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < dragThreshold) return;
+                moveEvent.preventDefault();
+                beginDrag();
               }
-            }, true);
-            handle.addEventListener("pointerdown", (event) => {
-              if (event.button !== 0) return;
-              const container = panel.parentElement;
-              const siblings = Array.from(container.children).filter((el) => el !== panel && el.classList.contains("card"));
-              const startRect = panel.getBoundingClientRect();
-              const pointerOffsetX = event.clientX - startRect.left;
-              const pointerOffsetY = event.clientY - startRect.top;
-              const startX = event.clientX;
-              const startY = event.clientY;
-              let dragging = false;
-              let lastTarget = null;
+              panel.style.left = `${moveEvent.clientX - pointerOffsetX}px`;
+              panel.style.top = `${moveEvent.clientY - pointerOffsetY}px`;
+            };
 
-              const beginDrag = () => {
-                dragging = true;
-                handle.setPointerCapture(event.pointerId);
-                document.body.classList.add("panel-drag-active");
-                panel.classList.add("panel-dragging");
-                panel.style.position = "fixed";
-                panel.style.left = `${startRect.left}px`;
-                panel.style.top = `${startRect.top}px`;
-                panel.style.width = `${startRect.width}px`;
-              };
+            const stop = () => {
+              handle.releasePointerCapture?.(event.pointerId);
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", stop);
+              window.removeEventListener("pointercancel", stop);
+              document.body.classList.remove("panel-drag-active");
+              if (dragging) {
+                handle.dataset.justDragged = "1";
+                panel.classList.remove("panel-dragging");
+              }
+            };
 
-              const move = (moveEvent) => {
-                if (!dragging) {
-                  if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < dragThreshold) return;
-                  moveEvent.preventDefault();
-                  beginDrag();
-                }
-                panel.style.left = `${moveEvent.clientX - pointerOffsetX}px`;
-                panel.style.top = `${moveEvent.clientY - pointerOffsetY}px`;
-
-                let closestSibling = null;
-                let closestDist = Infinity;
-                siblings.forEach((sibling) => {
-                  const rect = sibling.getBoundingClientRect();
-                  const dist = Math.hypot(
-                    (rect.left + rect.width / 2) - moveEvent.clientX,
-                    (rect.top + rect.height / 2) - moveEvent.clientY,
-                  );
-                  if (dist < closestDist) { closestDist = dist; closestSibling = { sibling, rect }; }
-                });
-                if (lastTarget) lastTarget.classList.remove("panel-drop-target");
-                if (closestSibling) {
-                  const { sibling, rect } = closestSibling;
-                  sibling.classList.add("panel-drop-target");
-                  lastTarget = sibling;
-                  const placeBefore = moveEvent.clientY < rect.top + (rect.height / 2);
-                  container.insertBefore(panel, placeBefore ? sibling : sibling.nextSibling);
-                }
-              };
-
-              const stop = () => {
-                handle.releasePointerCapture?.(event.pointerId);
-                window.removeEventListener("pointermove", move);
-                window.removeEventListener("pointerup", stop);
-                window.removeEventListener("pointercancel", stop);
-                document.body.classList.remove("panel-drag-active");
-                if (lastTarget) lastTarget.classList.remove("panel-drop-target");
-                if (dragging) {
-                  handle.dataset.justDragged = "1";
-                  panel.classList.remove("panel-dragging");
-                  panel.style.position = "";
-                  panel.style.left = "";
-                  panel.style.top = "";
-                  panel.style.width = "";
-                }
-              };
-
-              window.addEventListener("pointermove", move);
-              window.addEventListener("pointerup", stop);
-              window.addEventListener("pointercancel", stop);
-            });
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", stop);
+            window.addEventListener("pointercancel", stop);
           });
         });
       }
@@ -2108,7 +2876,8 @@
             forcedPlaybackIndex,
           ));
           manualTimingState.activeStart = null;
-          manualTimingState.previewFromAppliedLyrics = true;
+          manualTimingState.previewFromAppliedLyrics = manualTimingState.baselineEntries.length > 0
+            && !manualTimingState.entries.some((entry) => entry && Number.isFinite(entry.start));
           beginTimingRevision();
           persistManualTiming();
           startTimingModeHeartbeat();
@@ -2195,6 +2964,7 @@
       function onLyricsEditorInput() {
         const text = document.getElementById("lyricsEditor").value || "";
         parseLrcData(text);
+        renderChorusOverlay();
         updateLyricsReadyIndicator();
         updatePreview();
         if (!selectedLrcFilename) return;
@@ -2896,8 +3666,8 @@
             bgType: document.getElementById("bgType").value,
             transitionStyle: document.getElementById("transitionStyle").value,
             textEffect: document.getElementById("textEffect").value,
-            fxScope: document.getElementById("fxScope").value,
-            fxSpeed: document.getElementById("fxSpeed").value,
+            fxScope: getFxScope(),
+            fxSpeed: getFxSpeed(),
             revealMode: document.getElementById("revealMode").value,
             previewLineCount: document.getElementById("previewLineCount").value,
             playbackRate: document.getElementById("playbackRate").value,
@@ -2918,6 +3688,12 @@
           uiThemeId: currentThemeId,
         };
       }
+
+      // ================================================================
+      // SECTION: Project State Management
+      // Purpose: Load/save project state including lyrics, timing, theme,
+      //          effects, and preview settings to persistent storage
+      // ================================================================
 
       function applyProjectState(state) {
         if (!state) return;
@@ -2941,8 +3717,13 @@
         setIf("bgType", preview.bgType);
         setIf("transitionStyle", preview.transitionStyle);
         setIf("textEffect", preview.textEffect);
-        setIf("fxScope", preview.fxScope);
-        setIf("fxSpeed", preview.fxSpeed);
+        // FX panel is rebuilt from transitionStyle, so seed the cached scope/speed
+        // first, then rebuild the panel so the restored values are applied.
+        setFxScope(preview.fxScope);
+        setFxSpeed(preview.fxSpeed);
+        if (typeof updateFxPanel === "function") updateFxPanel();
+        // Honor the project's saved reveal mode; "continuous" is the markup default
+        // for new projects, but an explicit saved choice must not be discarded.
         setIf("revealMode", preview.revealMode);
         setIf("previewLineCount", preview.previewLineCount);
         setIf("playbackRate", preview.playbackRate);
@@ -2995,6 +3776,7 @@
         updateManualTimingHud();
         updateLyricsRevisionMeta();
         updatePreview();
+        updateFxPanel(); // Refresh FX customization panel with loaded settings
       }
 
       async function loadProjectSnapshot() {
@@ -3164,26 +3946,57 @@
 
       function parseLrcData(lrcText) {
         lyricLines = [];
+        // Strip manual chorus markers ([00:12.34]*word) so they never render as
+        // lyric text; they only select which words the chorus stem vocalizes.
+        lrcText = String(lrcText || "").replace(/(\[\d+:\d+(?:\.\d{1,3})?\])\s*\*/g, "$1");
         const tagRegex = /\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g;
         const endTagRegex = /<(\d+):(\d+)(?:\.(\d{1,3}))?>/g;
         const toSeconds = (m) => parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + parseInt((m[3] || "0").padEnd(3, "0").slice(0, 3), 10) / 1000;
         const plain = [];
+        let breakBefore = false;
         lrcText.split("\n").forEach((line) => {
           const raw = (line || "").trim();
-          if (!raw) return;
+          if (!raw) { breakBefore = lyricLines.length > 0 || plain.length > 0; return; }
           const tags = [...raw.matchAll(tagRegex)];
-          if (tags.length === 0) { plain.push(raw.replace(endTagRegex, "").trim() || raw); return; }
-          const endMatches = [...raw.matchAll(endTagRegex)];
-          const text = raw.replace(tagRegex, "").replace(endTagRegex, "").trim();
-          if (!text) return;
-          const endT = endMatches.length ? toSeconds(endMatches[endMatches.length - 1]) : null;
-          tags.forEach((m) => {
-            lyricLines.push({ time: toSeconds(m), end: endT, text });
+          if (tags.length === 0) {
+            plain.push({ text: raw.replace(endTagRegex, "").trim() || raw, breakBefore });
+            breakBefore = false;
+            return;
+          }
+          // Split into [tag -> following text] pieces so inline word-level timestamps
+          // ([t1]word1 [t2]word2) label their own words instead of duplicating the whole line.
+          const splitRe = /\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g;
+          const pieces = [];
+          let m, prevTime = null, prevIndex = 0;
+          while ((m = splitRe.exec(raw)) !== null) {
+            if (prevTime !== null) pieces.push({ time: prevTime, raw: raw.slice(prevIndex, m.index) });
+            prevTime = toSeconds(m);
+            prevIndex = splitRe.lastIndex;
+          }
+          if (prevTime !== null) pieces.push({ time: prevTime, raw: raw.slice(prevIndex) });
+          const parsed = pieces.map((p) => {
+            const ends = [...p.raw.matchAll(endTagRegex)];
+            return { time: p.time, text: p.raw.replace(endTagRegex, "").trim(), end: ends.length ? toSeconds(ends[ends.length - 1]) : null };
           });
+          const nonEmpty = parsed.filter((p) => p.text);
+          if (nonEmpty.length <= 1) {
+            // A single line, or a repeated line with leading stacked timestamps.
+            const fullEnds = [...raw.matchAll(endTagRegex)];
+            const fullText = raw.replace(tagRegex, "").replace(endTagRegex, "").trim();
+            if (!fullText) return;
+            const endT = fullEnds.length ? toSeconds(fullEnds[fullEnds.length - 1]) : null;
+            parsed.forEach((p) => {
+              lyricLines.push({ time: p.time, end: endT, text: fullText, breakBefore });
+              breakBefore = false;
+            });
+          } else {
+            // Inline word-level timing: each timestamp labels the word(s) after it.
+            nonEmpty.forEach((p, i) => {
+              lyricLines.push({ time: p.time, end: p.end, text: p.text, breakBefore: breakBefore && i === 0 });
+            });
+            breakBefore = false;
+          }
         });
-        if (lyricLines.length === 0 && plain.length > 0) {
-          let cursor = 0; plain.forEach((text) => { lyricLines.push({ time: cursor, end: null, text }); cursor += 3.5; });
-        }
         lyricLines.sort((a, b) => a.time - b.time);
         updateLyricsReadyIndicator();
       }
@@ -3237,6 +4050,12 @@
         }
       }
 
+      // ================================================================
+      // SECTION: Canvas Text Layout Engine
+      // Purpose: Build stable text layout (lines/words) from LRC lyrics,
+      //          calculate word positions and timing for rendering
+      // ================================================================
+
       // NEW STATIC LAYOUT ENGINE: Wraps all lyrics once to perfectly prevent shifting
       function buildStableLines(currentTime, maxW, wordPad = 0) {
         let lines = [];
@@ -3262,12 +4081,12 @@
                 if (!words.length) return;
                 if (words.length === 1 && Number.isFinite(item.end) && item.end > item.time) {
                     // Word-level line with an explicit end (F): fill start->end, then hold until next line.
-                    wordTokens.push({ text: words[0], start: item.time, end: item.end, isLrcStart: true });
+                    wordTokens.push({ text: words[0], start: item.time, end: item.end, isLrcStart: true, breakBefore: !!item.breakBefore });
                     return;
                 }
                 const durPerWord = (nextTime - item.time) / words.length;
                 words.forEach((w, wIdx) => {
-                    wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0 });
+                    wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0, breakBefore: !!item.breakBefore && wIdx === 0 });
                 });
             });
         }
@@ -3282,6 +4101,7 @@
             if (currLine.length > 0 && (currW + spaceW + tw) > maxW) forceBreak = true;
             if (currLine.length >= MAX_WORDS_PER_LINE) forceBreak = true;
             if (prevToken && prevToken.end !== null && token.start !== null && (token.start - prevToken.end) > PAUSE_THRESHOLD_SEC) forceBreak = true;
+            if (token.breakBefore) forceBreak = true;
             if (token.isLrcStart && currLine.length > 0) {
                 const prevIsLrcStart = prevToken ? prevToken.isLrcStart : true;
                 const nextIsLrcStart = (i + 1 < wordTokens.length) ? wordTokens[i+1].isLrcStart : true;
@@ -3337,32 +4157,7 @@
         return lines;
       }
 
-      function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX) {
-        const spaceW = ctx.measureText(" ").width + wordPad;
-        const cx = Number.isFinite(centerX) ? centerX : (canvas.width / 2);
-        let x = cx - tokens.reduce((s, t, i) => s + ctx.measureText(t.text).width + (i > 0 ? spaceW : 0), 0) / 2;
-        tokens.forEach((t, i) => {
-          if (i > 0) x += spaceW;
-          const tw = ctx.measureText(t.text).width;
-          ctx.strokeStyle = oColor;
-          ctx.strokeText(t.text, x, y);
-
-          if (t.active) {
-            const split = Math.max(0, Math.min(t.text.length, Math.floor(t.text.length * t.progress)));
-            const left = t.text.slice(0, split), right = t.text.slice(split);
-            const lw = ctx.measureText(left).width;
-            ctx.fillStyle = pColor; ctx.fillText(left, x, y);
-            ctx.fillStyle = sColor; ctx.fillText(right, x + lw, y);
-          } else if (t.progress >= 1) {
-            ctx.fillStyle = pColor; ctx.fillText(t.text, x, y);
-          } else {
-            ctx.fillStyle = sColor; ctx.fillText(t.text, x, y);
-          }
-          x += tw;
-        });
-      }
-
-
+      
 
       function onAudioLoaded() {
         if (previewShouldStartAtZero) {
@@ -3416,13 +4211,16 @@
 
       let smoothScrollY = 0; // State variable for Continuous Scroll Mode
 
-     function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX) {
+     function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX, frameTime) {
       const spaceW = ctx.measureText(" ").width + wordPad;
       const cx = Number.isFinite(centerX) ? centerX : (canvas.width / 2);
 
-      // NEW: Get the exact current audio time directly for our 'F' key override logic
+      // Use the frame time being rendered so the preview stays consistent with
+      // drawFrame(); fall back to the live element only if it wasn't provided.
       const audioEl = document.getElementById("previewAudio");
-      const currentTime = audioEl ? audioEl.currentTime : 0;
+      const currentTime = Number.isFinite(frameTime)
+        ? frameTime
+        : (audioEl ? audioEl.currentTime : 0);
 
       let x = cx - tokens.reduce((s, t, i) => s + ctx.measureText(t.text).width + (i > 0 ? spaceW : 0), 0) / 2;
       const positions = [];
@@ -3431,7 +4229,14 @@
           if (i > 0) x += spaceW;
           const tw = ctx.measureText(t.text).width;
           positions.push({ x: x + (tw / 2), width: tw });
-          const wordFx = activeFxScope === "word" && activeTransitionStyle !== "none" && Number.isFinite(t.start);
+          // Word-scope FX is a one-shot entrance animation that runs as the word
+          // is reached. It must only apply while the word is animating in, and it
+          // must never leave a word invisible once its animation window passed.
+          const wordFx = activeFxScope === "word"
+            && activeTransitionStyle !== "none"
+            && Number.isFinite(t.start)
+            && currentTime >= t.start
+            && currentTime < t.start + Math.max(0.05, activeFxSpeed);
           if (wordFx) {
             const wordProgress = Math.max(0, Math.min(1, (currentTime - t.start) / Math.max(0.05, activeFxSpeed)));
             const wordTransition = applyTransition(wordProgress, activeTransitionStyle);
@@ -3490,12 +4295,18 @@
             const targetStart = targetToken.isManual
               ? (manualTimingState.activeStart ?? currentTime)
               : (Number.isFinite(targetToken.start) ? targetToken.start : currentTime);
+
+            // Get bouncing ball settings from UI
+            const arcHeight = parseFloat(document.getElementById("arcHeight")?.value || "78");
+            const arcFraction = parseFloat(document.getElementById("arcFraction")?.value || "0.35");
+            const bouncePerSec = parseFloat(document.getElementById("bouncePerSec")?.value || "0.1");
+
             const flightProgress = activeIndex >= 0
               ? Math.max(0, Math.min(1, (currentTime - targetStart) / 0.32))
               : 1;
             const ballX = previous + ((target - previous) * flightProgress);
-            const arc = Math.sin(flightProgress * Math.PI) * 28;
-            const idleBounce = activeIndex < 0 ? Math.abs(Math.sin(currentTime * Math.PI * 2.4)) * 10 : 0;
+            const arc = Math.sin(flightProgress * Math.PI) * (arcHeight / 10);
+            const idleBounce = activeIndex < 0 ? Math.abs(Math.sin(currentTime * Math.PI * bouncePerSec * 2)) * (arcHeight / 15) : 0;
               const priority = activeIndex >= 0 ? 2 : 1;
               if (!bouncingBallCandidate || priority >= bouncingBallCandidate.priority) {
                 bouncingBallCandidate = { x: ballX, y: y - 30 - arc - idleBounce, color: pColor, priority };
@@ -3504,11 +4315,11 @@
         }
   }
 
-    function updatePreview() {
-        // Uses your existing audio variable, or grabs it if undefined
-        const audioEl = typeof audio !== 'undefined' ? audio : document.getElementById("previewAudio");
-        drawFrame(audioEl ? audioEl.currentTime || 0 : 0);
-    }
+    // ================================================================
+    // SECTION: Canvas Drawing Engine (Preview Rendering)
+    // Purpose: Render lyrics, text effects, and animations to canvas
+    //          in real-time as audio plays (50fps preview loop)
+    // ================================================================
 
     function drawFrame(time) {
       const w = Math.max(320, Number(previewWidth) || 1280);
@@ -3574,9 +4385,10 @@
         const lineGap = Math.max(8, Math.round(baseLineGap * layoutScale));
         const wordPad = Math.max(0, Math.round(baseWordPad * layoutScale));
 
-        // New FX modifiers
-        const fxScope = document.getElementById("fxScope") ? document.getElementById("fxScope").value : "page";
-        const fxSpeed = parseFloat(document.getElementById("fxSpeed") ? document.getElementById("fxSpeed").value : "0.6");
+        // New FX modifiers (read through cached accessors so a hidden/absent
+        // FX panel never resets scope/speed back to defaults mid-playback)
+        const fxScope = getFxScope();
+        const fxSpeed = parseFloat(getFxSpeed());
         activeFxScope = fxScope;
         activeTransitionStyle = tStyle;
         activeFxSpeed = Math.max(0.05, fxSpeed || 0.6);
@@ -3589,7 +4401,7 @@
 
         const allLines = buildStableLines(time, maxW, wordPad);
         const reqVisible = Math.max(1, Math.min(4, parseInt(document.getElementById("previewLineCount").value, 10) || 3));
-        const revealMode = document.getElementById("revealMode").value || "block";
+        const revealMode = document.getElementById("revealMode").value || "continuous";
 
         let activeIdx = -1;
         for (let i = 0; i < allLines.length; i++) { if (allLines[i].some((t) => t.active)) { activeIdx = i; break; } }
@@ -3656,7 +4468,14 @@
             let pageStart = time;
             if (linesToDraw[0] && linesToDraw[0][0] && linesToDraw[0][0].start !== undefined) pageStart = linesToDraw[0][0].start;
 
-            let prog = Math.max(0, Math.min(1, (time - pageStart) / fxSpeed));
+            // One-shot page entrance: animate only while the page is entering so
+            // the page never stays stuck at alpha 0 / mid-transform.
+            const pageAnimating = Number.isFinite(pageStart)
+              && time >= pageStart
+              && time < pageStart + fxSpeed;
+            let prog = pageAnimating
+              ? Math.max(0, Math.min(1, (time - pageStart) / fxSpeed))
+              : 1;
             const tr = applyTransition(prog, tStyle);
 
             ctx.save();
@@ -3664,7 +4483,7 @@
             if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
             ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -cy);
 
-            linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx));
+            linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx, time));
             ctx.restore();
 
           } else if (fxScope === "line") {
@@ -3673,23 +4492,30 @@
               let lineStart = time;
               if (t[0] && t[0].start !== undefined) lineStart = t[0].start;
 
-              let prog = Math.max(0, Math.min(1, (time - lineStart) / fxSpeed));
+              // One-shot entrance: only animate while the line is entering, and
+              // never leave an already-entered (or upcoming) line invisible.
+              const animating = Number.isFinite(lineStart)
+                && time >= lineStart
+                && time < lineStart + fxSpeed;
+              let prog = animating
+                ? Math.max(0, Math.min(1, (time - lineStart) / fxSpeed))
+                : 1;
               const tr = applyTransition(prog, tStyle);
 
               ctx.save();
               ctx.globalAlpha = tr.alpha;
               if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
 
-              let lineY = revealMode === "continuous" ? (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap)) : (bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap));
+              let lineY = bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap);
 
               ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -lineY);
-              drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx);
+              drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx, time);
               ctx.restore();
             });
           } else {
             linesToDraw.forEach((line, i) => {
               const lineY = bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap);
-              drawTokenLine(line, lineY, primary, secondary, outline, wordPad, cx);
+              drawTokenLine(line, lineY, primary, secondary, outline, wordPad, cx, time);
             });
           }
         } else {
@@ -3698,10 +4524,20 @@
         }
         if (bouncingBallCandidate) {
           ctx.save();
-          ctx.fillStyle = bouncingBallCandidate.color;
+          const ballRadius = parseFloat(document.getElementById("ballRadius")?.value || "26") * layoutScale;
+          const ballColor = document.getElementById("ballColor")?.value || "#ffffff";
+          const ballOutlineColor = document.getElementById("ballOutlineColor")?.value || "#000000";
+
+          // Draw ball fill
+          ctx.fillStyle = ballColor;
           ctx.beginPath();
-          ctx.arc(bouncingBallCandidate.x, bouncingBallCandidate.y, Math.max(5, ctx.lineWidth * 1.5), 0, Math.PI * 2);
+          ctx.arc(bouncingBallCandidate.x, bouncingBallCandidate.y, ballRadius, 0, Math.PI * 2);
           ctx.fill();
+
+          // Draw ball outline
+          ctx.strokeStyle = ballOutlineColor;
+          ctx.lineWidth = Math.max(1, Math.round(2 * layoutScale));
+          ctx.stroke();
           ctx.restore();
         }
       }
@@ -3770,12 +4606,26 @@
 
       onPreviewResolutionChange();
       applyControlContrastVars();
-      enablePanelDragging();
-      onFontSizeChanged(); loadFonts(); loadThemes(); loadFileManifest(); loadJobs();
-      jobPollTimer = window.setInterval(loadJobs, 2000);
-      updatePreview(); updateManualTimingHud();
+      // enablePanelDragging(); // DISABLED: Panels stay locked in grid
+      onFontSizeChanged(); updateManualTimingHud();
       initPreviewControlsAutoFade();
       initMobileMode();
+      updateFxPanel(); // Initialize FX panel
+
+      // Defer heavy operations - UI is responsive first
+      setTimeout(async () => {
+        updatePreview(); // Heavy canvas drawing
+      }, 50);
+
+      setTimeout(async () => {
+        await loadJobs();
+        jobPollTimer = window.setInterval(loadJobs, 2000);
+      }, 100);
+
+      // Load supplementary data in background
+      setTimeout(() => { loadFonts(); }, 500);
+      setTimeout(() => { loadThemes(); }, 600);
+      setTimeout(() => { loadFileManifest(); }, 700);
     </script>
 </body>
 </html>

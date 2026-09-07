@@ -1,32 +1,42 @@
-import os
+import concurrent.futures
+import ctypes
 import gc
+import html
+import json
+import logging
+import math
+import os
 import re
 import shutil
 import subprocess
 import sys
-import ctypes
+import tempfile
 import threading
 import time
-import uuid
-import logging
-import json
-import html
 import traceback
-import tempfile
+import uuid
 import zipfile
-import concurrent.futures
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse
+
 import requests
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+# ===============================================================
+# SECTION: Application Setup & Configuration
+# Purpose: Initialize FastAPI app, set up directories, static file
+#          mounting, logging, and global state management
+# ===============================================================
+
 app = FastAPI(title="AI Audio Video Production Suite")
-WORKSPACE = Path(os.environ.get("WORKSPACE_DIR", Path(__file__).resolve().parent)).resolve()
+WORKSPACE = Path(
+    os.environ.get("WORKSPACE_DIR", Path(__file__).resolve().parent)
+).resolve()
 OUTPUT_DIR = WORKSPACE / "output"
 FONTS_DIR = WORKSPACE / "fonts"
 SERVED_FONTS_DIR = WORKSPACE / ".served-fonts"
@@ -57,7 +67,16 @@ RENAME_LOCK = threading.RLock()
 PENDING_PROJECT_RENAMES: dict[str, str] = {}
 # While the user is hand-timing lyrics, pause automatic ingest/lyrics jobs until this epoch.
 TIMING_MODE_UNTIL = 0.0
-SUPPORTED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".webm", ".mp4"}
+SUPPORTED_AUDIO_EXTS = {
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".flac",
+    ".ogg",
+    ".aac",
+    ".webm",
+    ".mp4",
+}
 METUBE_URL = "http://metube:8081"
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "/usr/bin/ffmpeg")
 DERIVED_NAME_MARKERS = (
@@ -104,9 +123,21 @@ _TITLE_JUNK = re.compile(
 _WORD_END_TAG_RE = re.compile(r"<\d{1,3}:\d{1,2}(?:\.\d{1,3})?>")
 
 
+# ===============================================================
+# SECTION: Exception Classes & Job Management
+# Purpose: Define custom exceptions, error handling, and job
+#          status tracking for async operations
+# ===============================================================
+
 class JobCancelledError(RuntimeError):
     pass
 
+
+# ===============================================================
+# SECTION: Memory & Resource Management
+# Purpose: Clean up heap memory, garbage collection, and 
+#          resource allocation for long-running processes
+# ===============================================================
 
 def _trim_process_heap() -> None:
     try:
@@ -157,7 +188,11 @@ async def _cleanup_after_every_request(request, call_next):
 def _job_view(job: dict) -> dict:
     queue_position = 0
     if job.get("status") == "queued":
-        queued_ids = [job_id for job_id in JOB_QUEUE if JOBS.get(job_id, {}).get("status") == "queued"]
+        queued_ids = [
+            job_id
+            for job_id in JOB_QUEUE
+            if JOBS.get(job_id, {}).get("status") == "queued"
+        ]
         try:
             queue_position = queued_ids.index(job["id"]) + 1
         except ValueError:
@@ -223,7 +258,9 @@ def _effective_ai_device(requested: str | None = None) -> str:
         if not torch.cuda.is_available():
             return "cpu"
         if not _cuda_runtime_ready():
-            logger.warning("[CUDA CHECK] CUDA visible but cuDNN runtime libs are missing. Falling back to CPU.")
+            logger.warning(
+                "[CUDA CHECK] CUDA visible but cuDNN runtime libs are missing. Falling back to CPU."
+            )
             return "cpu"
         return "cuda"
     except Exception:
@@ -246,7 +283,12 @@ def _cuda_runtime_ready() -> bool:
 def _whisper_compute_type(device: str) -> str:
     normalized = _normalize_device(device, "auto")
     if normalized == "cuda":
-        raw = str(os.environ.get("WHISPER_COMPUTE_TYPE_CUDA", "int8_float16")).strip().lower() or "int8_float16"
+        raw = (
+            str(os.environ.get("WHISPER_COMPUTE_TYPE_CUDA", "int8_float16"))
+            .strip()
+            .lower()
+            or "int8_float16"
+        )
         allowed = {"float16", "int8_float16", "float32"}
         if raw not in allowed:
             logger.warning(
@@ -256,7 +298,10 @@ def _whisper_compute_type(device: str) -> str:
             return "int8_float16"
         return raw
 
-    raw = str(os.environ.get("WHISPER_COMPUTE_TYPE_CPU", "int8")).strip().lower() or "int8"
+    raw = (
+        str(os.environ.get("WHISPER_COMPUTE_TYPE_CPU", "int8")).strip().lower()
+        or "int8"
+    )
     allowed = {"int8", "float32"}
     if raw not in allowed:
         logger.warning(
@@ -294,28 +339,38 @@ def _serialize_faster_whisper_payload(segments, info) -> dict:
     payload_segments = []
     for idx, seg in enumerate(list(segments)):
         words = []
-        for word in (getattr(seg, "words", None) or []):
+        for word in getattr(seg, "words", None) or []:
             start = getattr(word, "start", None)
             end = getattr(word, "end", None)
-            words.append({
-                "word": str(getattr(word, "word", "") or "").strip(),
-                "start": float(start) if isinstance(start, (int, float)) else None,
-                "end": float(end) if isinstance(end, (int, float)) else None,
-                "probability": float(getattr(word, "probability", 0.0) or 0.0),
-            })
-        payload_segments.append({
-            "id": idx,
-            "start": float(getattr(seg, "start", 0.0) or 0.0),
-            "end": float(getattr(seg, "end", 0.0) or 0.0),
-            "text": str(getattr(seg, "text", "") or "").strip(),
-            "words": [item for item in words if item["word"]],
-        })
+            words.append(
+                {
+                    "word": str(getattr(word, "word", "") or "").strip(),
+                    "start": float(start) if isinstance(start, (int, float)) else None,
+                    "end": float(end) if isinstance(end, (int, float)) else None,
+                    "probability": float(getattr(word, "probability", 0.0) or 0.0),
+                }
+            )
+        payload_segments.append(
+            {
+                "id": idx,
+                "start": float(getattr(seg, "start", 0.0) or 0.0),
+                "end": float(getattr(seg, "end", 0.0) or 0.0),
+                "text": str(getattr(seg, "text", "") or "").strip(),
+                "words": [item for item in words if item["word"]],
+            }
+        )
     return {
         "language": str(getattr(info, "language", "") or ""),
         "duration": float(getattr(info, "duration", 0.0) or 0.0),
         "segments": payload_segments,
     }
 
+
+# ===============================================================
+# SECTION: Whisper Transcription (AI Speech-to-Text)
+# Purpose: Use faster-whisper model to transcribe audio to text
+#          with word-level timing and multiple language support
+# ===============================================================
 
 def _transcribe_with_faster_whisper(
     audio_path: Path,
@@ -375,7 +430,11 @@ def _run_faster_whisper_with_fallback(
         compute_candidates = _whisper_compute_type_candidates(device)
         for candidate_idx, compute_type in enumerate(compute_candidates):
             _ensure_not_cancelled(job_id)
-            stage_msg = action_label if idx == 0 else f"{action_label} fallback on {device.upper()}"
+            stage_msg = (
+                action_label
+                if idx == 0
+                else f"{action_label} fallback on {device.upper()}"
+            )
             _update_job(
                 job_id,
                 stage=current_stage,
@@ -397,7 +456,11 @@ def _run_faster_whisper_with_fallback(
                 raise
             except Exception as exc:
                 last_error = exc
-                if device == "cuda" and _is_whisper_compute_type_error(exc) and candidate_idx < len(compute_candidates) - 1:
+                if (
+                    device == "cuda"
+                    and _is_whisper_compute_type_error(exc)
+                    and candidate_idx < len(compute_candidates) - 1
+                ):
                     logger.warning(
                         "[FASTER WHISPER CUDA RETRY] job=%s compute_type=%s failed, trying next CUDA compute type: %s",
                         job_id,
@@ -421,7 +484,7 @@ def _run_faster_whisper_with_fallback(
 
 def _build_lrc_from_transcript_payload(payload: dict) -> str:
     lines = []
-    for seg in (payload.get("segments") or []):
+    for seg in payload.get("segments") or []:
         text = str(seg.get("text") or "").strip()
         start = seg.get("start")
         if not text or not isinstance(start, (int, float)):
@@ -455,7 +518,7 @@ def _probe_media_tags(path: Path) -> tuple[str, str]:
         str(path),
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(cmd, check=False, capture_output=True, text=True)
         if res.returncode != 0:
             return "", ""
         payload = json.loads(res.stdout or "{}")
@@ -470,12 +533,24 @@ def _probe_media_duration(path: Path) -> float:
     ffprobe_bin = os.environ.get("FFPROBE_BIN", "/usr/bin/ffprobe")
     try:
         res = subprocess.run(
-            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(path),
+            ],
+            check=False,
             capture_output=True,
             text=True,
             timeout=15,
         )
-        return max(0.0, float((res.stdout or "0").strip())) if res.returncode == 0 else 0.0
+        return (
+            max(0.0, float((res.stdout or "0").strip())) if res.returncode == 0 else 0.0
+        )
     except Exception:
         return 0.0
 
@@ -488,7 +563,10 @@ def _derive_media_identity(
     title: str = "",
     fallback_stem: str = "track",
 ) -> dict:
-    fallback = _clean_title(raw_name or (path.stem if path else fallback_stem)) or fallback_stem
+    fallback = (
+        _clean_title(raw_name or (path.stem if path else fallback_stem))
+        or fallback_stem
+    )
     detected_artist = artist.strip()
     detected_title = title.strip()
 
@@ -499,7 +577,9 @@ def _derive_media_identity(
         if not detected_title:
             detected_title = tag_title.strip()
 
-    parsed_artist, parsed_title = _split_artist_title(_clean_title(fallback) or fallback)
+    parsed_artist, parsed_title = _split_artist_title(
+        _clean_title(fallback) or fallback
+    )
     if not detected_artist:
         detected_artist = parsed_artist
     if not detected_title:
@@ -507,7 +587,11 @@ def _derive_media_identity(
 
     detected_artist = _clean_title(detected_artist)
     detected_title = _clean_title(detected_title) or fallback_stem
-    display = f"{detected_artist} - {detected_title}" if detected_artist and detected_title else detected_title
+    display = (
+        f"{detected_artist} - {detected_title}"
+        if detected_artist and detected_title
+        else detected_title
+    )
     return {
         "artist": detected_artist,
         "title": detected_title,
@@ -521,14 +605,26 @@ def _probe_url_identity(url: str) -> dict:
     try:
         res = subprocess.run(
             ["yt-dlp", "--dump-single-json", "--no-playlist", url],
+            check=False,
             capture_output=True,
             text=True,
         )
         if res.returncode == 0 and (res.stdout or "").strip():
             meta = json.loads(res.stdout)
             raw_title = str(meta.get("track") or meta.get("title") or fallback)
-            artist = str(meta.get("artist") or meta.get("album_artist") or meta.get("creator") or meta.get("uploader") or "")
-            return _derive_media_identity(raw_name=raw_title, artist=artist, title=raw_title, fallback_stem=fallback)
+            artist = str(
+                meta.get("artist")
+                or meta.get("album_artist")
+                or meta.get("creator")
+                or meta.get("uploader")
+                or ""
+            )
+            return _derive_media_identity(
+                raw_name=raw_title,
+                artist=artist,
+                title=raw_title,
+                fallback_stem=fallback,
+            )
     except Exception:
         pass
     return _derive_media_identity(raw_name=fallback, fallback_stem=fallback)
@@ -554,8 +650,12 @@ def _apply_canonical_media_name(
     artist: str = "",
     title: str = "",
 ) -> tuple[Path, dict]:
-    identity = _derive_media_identity(path=path, raw_name=raw_name or path.stem, artist=artist, title=title)
-    target = _unique_output_path(identity["safe_stem"], path.suffix or ".mp3", current_name=path.name)
+    identity = _derive_media_identity(
+        path=path, raw_name=raw_name or path.stem, artist=artist, title=title
+    )
+    target = _unique_output_path(
+        identity["safe_stem"], path.suffix or ".mp3", current_name=path.name
+    )
     if target != path:
         path.rename(target)
         logger.info("[MEDIA RENAME] %s -> %s", path.name, target.name)
@@ -566,7 +666,11 @@ def _apply_canonical_media_name(
 def _choose_best_identity(downloaded: Path, expected: dict) -> dict:
     actual = _derive_media_identity(path=downloaded, raw_name=downloaded.stem)
     expected_safe = str(expected.get("safe_stem", "") or "").strip().lower()
-    weak_expected = expected_safe.startswith("download_") or expected_safe in {"watch", "download", "video"}
+    weak_expected = expected_safe.startswith("download_") or expected_safe in {
+        "watch",
+        "download",
+        "video",
+    }
     if weak_expected:
         return actual
     if expected.get("artist") or expected.get("title"):
@@ -592,7 +696,9 @@ def _move_audio_into_project(audio_path: Path, project_name: str) -> Path:
     target = project_dir / target_name
     if target.exists() and target.resolve() != audio_path.resolve():
         counter = 2
-        while (project_dir / f"{safe_project}_{counter}{audio_path.suffix or '.mp3'}").exists():
+        while (
+            project_dir / f"{safe_project}_{counter}{audio_path.suffix or '.mp3'}"
+        ).exists():
             counter += 1
         target = project_dir / f"{safe_project}_{counter}{audio_path.suffix or '.mp3'}"
 
@@ -601,19 +707,25 @@ def _move_audio_into_project(audio_path: Path, project_name: str) -> Path:
     return target
 
 
-def _wait_for_new_media_file(job_id: str, known_files: set[str], timeout_seconds: int = 1800) -> Path:
+def _wait_for_new_media_file(
+    job_id: str, known_files: set[str], timeout_seconds: int = 1800
+) -> Path:
     seen_sizes: dict[str, int] = {}
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         _ensure_not_cancelled(job_id)
-        for file_path in sorted(OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        for file_path in sorted(
+            OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+        ):
             if not _is_source_media(file_path) or file_path.name in known_files:
                 continue
             size = file_path.stat().st_size
             if size > 0 and seen_sizes.get(file_path.name) == size:
                 return file_path
             seen_sizes[file_path.name] = size
-        _update_job(job_id, progress=30, message="Waiting for MeTube download to finish")
+        _update_job(
+            job_id, progress=30, message="Waiting for MeTube download to finish"
+        )
         time.sleep(2)
     raise RuntimeError("Timed out waiting for MeTube to finish downloading")
 
@@ -646,7 +758,8 @@ def _refresh_font_cache() -> list[dict]:
                 if not target_path.exists():
                     try:
                         shutil.copy2(font_path, target_path)
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("Failed to copy font: %s", exc)
                         continue
                 fonts.append({"name": font_path.stem, "filename": target_path.name})
 
@@ -670,6 +783,7 @@ def _resolve_render_font_family(font_name: str) -> str:
         try:
             probe = subprocess.run(
                 ["fc-scan", "--format=%{family}", str(font_path)],
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=3,
@@ -731,27 +845,31 @@ def _collect_python_syntax_issues() -> list[dict]:
         except SyntaxError as err:
             line_text = (err.text or "").rstrip("\n")
             column = int(err.offset or 0)
-            issues.append({
-                "kind": "syntax",
-                "severity": "error",
-                "message": str(err.msg or err),
-                "file": _workspace_relative_path(path),
-                "line": int(err.lineno or 0),
-                "column": column,
-                "code": line_text,
-                "pointer": (" " * max(0, column - 1) + "^") if column else "",
-            })
+            issues.append(
+                {
+                    "kind": "syntax",
+                    "severity": "error",
+                    "message": str(err.msg or err),
+                    "file": _workspace_relative_path(path),
+                    "line": int(err.lineno or 0),
+                    "column": column,
+                    "code": line_text,
+                    "pointer": (" " * max(0, column - 1) + "^") if column else "",
+                }
+            )
         except Exception as exc:
-            issues.append({
-                "kind": "syntax",
-                "severity": "error",
-                "message": str(exc),
-                "file": _workspace_relative_path(path),
-                "line": 0,
-                "column": 0,
-                "code": "",
-                "pointer": "",
-            })
+            issues.append(
+                {
+                    "kind": "syntax",
+                    "severity": "error",
+                    "message": str(exc),
+                    "file": _workspace_relative_path(path),
+                    "line": 0,
+                    "column": 0,
+                    "code": "",
+                    "pointer": "",
+                }
+            )
     return issues
 
 
@@ -759,19 +877,23 @@ def _collect_runtime_issues() -> list[dict]:
     issues = []
     with JOB_LOCK:
         failed_jobs = [job for job in JOBS.values() if job.get("status") == "failed"]
-    for job in sorted(failed_jobs, key=lambda item: item.get("updated_at", 0), reverse=True)[:12]:
-        issues.append({
-            "kind": "runtime",
-            "severity": "error",
-            "job_id": job.get("id", ""),
-            "job_label": job.get("label", ""),
-            "message": job.get("message", "Unknown runtime failure"),
-            "file": job.get("error_file", ""),
-            "line": int(job.get("error_line", 0) or 0),
-            "column": int(job.get("error_column", 0) or 0),
-            "code": job.get("error_code", ""),
-            "trace": job.get("error_trace", ""),
-        })
+    for job in sorted(
+        failed_jobs, key=lambda item: item.get("updated_at", 0), reverse=True
+    )[:12]:
+        issues.append(
+            {
+                "kind": "runtime",
+                "severity": "error",
+                "job_id": job.get("id", ""),
+                "job_label": job.get("label", ""),
+                "message": job.get("message", "Unknown runtime failure"),
+                "file": job.get("error_file", ""),
+                "line": int(job.get("error_line", 0) or 0),
+                "column": int(job.get("error_column", 0) or 0),
+                "code": job.get("error_code", ""),
+                "trace": job.get("error_trace", ""),
+            }
+        )
     return issues
 
 
@@ -788,15 +910,17 @@ def _load_theme_catalog() -> list[dict]:
         vars_payload = payload.get("vars") or {}
         if not isinstance(vars_payload, dict) or not vars_payload:
             continue
-        themes.append({
-            "id": theme_id,
-            "name": str(payload.get("name") or theme_id),
-            "description": str(payload.get("description") or ""),
-            "source_name": str(payload.get("source_name") or ""),
-            "source_url": str(payload.get("source_url") or ""),
-            "license": str(payload.get("license") or ""),
-            "vars": vars_payload,
-        })
+        themes.append(
+            {
+                "id": theme_id,
+                "name": str(payload.get("name") or theme_id),
+                "description": str(payload.get("description") or ""),
+                "source_name": str(payload.get("source_name") or ""),
+                "source_url": str(payload.get("source_url") or ""),
+                "license": str(payload.get("license") or ""),
+                "vars": vars_payload,
+            }
+        )
     return themes
 
 
@@ -806,7 +930,10 @@ def _cmd_text(cmd: list[str]) -> str:
 
 def _find_active_job_by_key(target_key: str) -> dict | None:
     for job in JOBS.values():
-        if job.get("target_key") == target_key and job["status"] in {"queued", "running"}:
+        if job.get("target_key") == target_key and job["status"] in {
+            "queued",
+            "running",
+        }:
             return job
     return None
 
@@ -822,7 +949,17 @@ def _has_active_job_for_audio(rel_audio: str, project_name: str = "") -> bool:
     return False
 
 
-def _enqueue_job(kind: str, label: str, runner: str, *, section: str = "general", stage: str = "", target_key: str = "", details: str = "", **kwargs) -> dict:
+def _enqueue_job(
+    kind: str,
+    label: str,
+    runner: str,
+    *,
+    section: str = "general",
+    stage: str = "",
+    target_key: str = "",
+    details: str = "",
+    **kwargs,
+) -> dict:
     # A pending rename holds this lock through the filesystem move, so jobs
     # either keep using the original directory or start after its final name.
     with RENAME_LOCK:
@@ -865,7 +1002,15 @@ def _enqueue_job(kind: str, label: str, runner: str, *, section: str = "general"
             }
             JOBS[job_id] = job
             JOB_QUEUE.append(job_id)
-            logger.info("[QUEUE] queued job=%s type=%s runner=%s section=%s stage=%s target=%s", job_id, kind, runner, section, stage, target_key or "-")
+            logger.info(
+                "[QUEUE] queued job=%s type=%s runner=%s section=%s stage=%s target=%s",
+                job_id,
+                kind,
+                runner,
+                section,
+                stage,
+                target_key or "-",
+            )
             return _job_view(job)
 
 
@@ -910,7 +1055,12 @@ def _cancel_job(job_id: str) -> dict | None:
             return _job_view(job)
         job["message"] = "Cancelling..."
         job["updated_at"] = time.time()
-    logger.info("[QUEUE] cancellation requested job=%s label=%s status=%s", job_id, job.get("label", "-"), job.get("status", "-"))
+    logger.info(
+        "[QUEUE] cancellation requested job=%s label=%s status=%s",
+        job_id,
+        job.get("label", "-"),
+        job.get("status", "-"),
+    )
     _terminate_running_process(job_id)
     return _job_view(job)
 
@@ -926,7 +1076,9 @@ def _run_cancellable_command(
     _ensure_not_cancelled(job_id)
     logger.info("[PROC START] job=%s %s | %s", job_id, message, _cmd_text(cmd))
     _update_job(job_id, status="running", message=message, progress=start_progress)
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+    )
     stderr_tail = deque(maxlen=40)
     latest_media_time = [0.0]
 
@@ -960,7 +1112,9 @@ def _run_cancellable_command(
             now = time.time()
             if total_duration > 0 and latest_media_time[0] > 0:
                 ratio = min(1.0, latest_media_time[0] / total_duration)
-                measured_progress = int(start_progress + ((end_progress - start_progress) * ratio))
+                measured_progress = int(
+                    start_progress + ((end_progress - start_progress) * ratio)
+                )
                 _update_job(job_id, progress=min(measured_progress, pulse_cap))
             elif pulse_progress < pulse_cap and (now - last_pulse_at) >= 1.5:
                 # Keep UI responsive for commands that do not emit parseable progress.
@@ -971,8 +1125,16 @@ def _run_cancellable_command(
         stderr_thread.join(timeout=2)
         stderr_output = "\n".join(stderr_tail)
         if proc.returncode != 0:
-            logger.error("[PROC FAIL] job=%s code=%s cmd=%s\n%s", job_id, proc.returncode, _cmd_text(cmd), (stderr_output or "")[-2000:])
-            raise RuntimeError((stderr_output or f"Command failed: {' '.join(cmd)}").strip()[-2000:])
+            logger.error(
+                "[PROC FAIL] job=%s code=%s cmd=%s\n%s",
+                job_id,
+                proc.returncode,
+                _cmd_text(cmd),
+                (stderr_output or "")[-2000:],
+            )
+            raise RuntimeError(
+                (stderr_output or f"Command failed: {' '.join(cmd)}").strip()[-2000:]
+            )
         logger.info("[PROC OK] job=%s code=0 cmd=%s", job_id, _cmd_text(cmd))
         _update_job(job_id, progress=end_progress)
     finally:
@@ -998,7 +1160,13 @@ def _run_demucs_with_progress(
         prefix = "Separating stems"
         if idx > 0:
             prefix = f"CUDA failed, retrying separation on {device.upper()}"
-        _update_job(job_id, status="running", stage="stem separation", message=f"{prefix} for {audio_path.name}", progress=start_progress)
+        _update_job(
+            job_id,
+            status="running",
+            stage="stem separation",
+            message=f"{prefix} for {audio_path.name}",
+            progress=start_progress,
+        )
         _ensure_not_cancelled(job_id)
 
         cmd = [
@@ -1015,7 +1183,9 @@ def _run_demucs_with_progress(
             str(stems_out),
             str(audio_path),
         ]
-        logger.info("[DEMUCS START] job=%s device=%s cmd=%s", job_id, device, _cmd_text(cmd))
+        logger.info(
+            "[DEMUCS START] job=%s device=%s cmd=%s", job_id, device, _cmd_text(cmd)
+        )
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
 
         proc = subprocess.Popen(
@@ -1049,8 +1219,14 @@ def _run_demucs_with_progress(
                     match = re.search(r"(\d{1,3})%\|", part)
                     if match:
                         pct = max(0, min(100, int(match.group(1))))
-                        progress = start_progress + int((end_progress - start_progress) * (pct / 100.0))
-                        _update_job(job_id, message=f"Separating stems for {audio_path.name} ({pct}%)", progress=progress)
+                        progress = start_progress + int(
+                            (end_progress - start_progress) * (pct / 100.0)
+                        )
+                        _update_job(
+                            job_id,
+                            message=f"Separating stems for {audio_path.name} ({pct}%)",
+                            progress=progress,
+                        )
             returncode = proc.wait()
             if returncode == 0:
                 logger.info("[DEMUCS OK] job=%s device=%s", job_id, device)
@@ -1058,7 +1234,9 @@ def _run_demucs_with_progress(
                 return device
             collected = "".join(all_output)
             last_error = (collected or f"demucs failed with code {returncode}")[-2000:]
-            logger.warning("[DEMUCS FAIL] job=%s device=%s code=%s", job_id, device, returncode)
+            logger.warning(
+                "[DEMUCS FAIL] job=%s device=%s code=%s", job_id, device, returncode
+            )
         finally:
             with JOB_LOCK:
                 RUNNING_PROCESSES.pop(job_id, None)
@@ -1083,20 +1261,26 @@ def _enhanced_lrc_to_word_lines(text: str) -> str:
     return "\n".join(out)
 
 
-def _fetch_synced_lyrics_enhanced(term: str, out_path: Path, timeout: int | None = None) -> bool:
+def _fetch_synced_lyrics_enhanced(
+    term: str, out_path: Path, timeout: int | None = None
+) -> bool:
     """Try to fetch word/syllable-level (enhanced) synced lyrics and store them as word-per-line LRC."""
     tmp_path = out_path.with_name(out_path.name + ".enh")
     run_kwargs: dict = {"capture_output": True, "text": True}
     if timeout is not None:
         run_kwargs["timeout"] = timeout
     try:
-        res = subprocess.run(["syncedlyrics", term, "-o", str(tmp_path), "--enhanced"], **run_kwargs)
+        res = subprocess.run(
+            ["syncedlyrics", term, "-o", str(tmp_path), "--enhanced"], **run_kwargs
+        )
         if res.returncode == 0 and tmp_path.exists():
             raw = tmp_path.read_text(encoding="utf-8", errors="ignore")
             converted = _enhanced_lrc_to_word_lines(raw)
             if converted.strip():
                 out_path.write_text(converted + "\n", encoding="utf-8")
-                logger.info("[LYRICS SYNCED] enhanced word-level lyrics captured for %r", term)
+                logger.info(
+                    "[LYRICS SYNCED] enhanced word-level lyrics captured for %r", term
+                )
                 return True
     except Exception as exc:
         logger.warning("[LYRICS SYNCED] enhanced fetch failed for %r: %s", term, exc)
@@ -1119,6 +1303,12 @@ def _run_syncedlyrics(term: str, out_path: Path, timeout: int | None = None) -> 
     return res.returncode == 0 and _has_timed_lyrics(out_path)
 
 
+# ===============================================================
+# SECTION: Audio Processing Pipeline (Demucs, Transcription, Lyrics)
+# Purpose: Split audio into stems (vocals/instrumental), transcribe
+#          to lyrics, fetch synced lyrics, and correct word timing
+# ===============================================================
+
 def _run_audio_pipeline_job(
     job_id: str,
     audio_filename: str,
@@ -1136,7 +1326,9 @@ def _run_audio_pipeline_job(
     audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
     rel_audio = _relative_to_output(audio_path)
     _update_job(job_id, audio_filename=rel_audio, project_name=audio_path.parent.name)
-    identity = _derive_media_identity(path=audio_path, raw_name=display_title or audio_path.stem)
+    identity = _derive_media_identity(
+        path=audio_path, raw_name=display_title or audio_path.stem
+    )
     lyrics_search = lyrics_query or identity["display"] or audio_path.stem
     logger.info("[PIPELINE START] job=%s audio=%s", job_id, audio_path.name)
     ACTIVE_PROCESSING_CACHE.add(rel_audio)
@@ -1145,7 +1337,9 @@ def _run_audio_pipeline_job(
         stems_out = project_dir / "stems"
         stem_ai_device = _effective_ai_device(stem_device)
         whisper_ai_device = _effective_ai_device(whisper_device)
-        _update_job(job_id, stem_device=stem_ai_device, whisper_device=whisper_ai_device)
+        _update_job(
+            job_id, stem_device=stem_ai_device, whisper_device=whisper_ai_device
+        )
         demucs_end = start_progress + int((end_progress - start_progress) * 0.45)
         stem_ai_device = _run_demucs_with_progress(
             job_id,
@@ -1156,7 +1350,10 @@ def _run_audio_pipeline_job(
             demucs_end,
         )
         _update_job(job_id, stem_device=stem_ai_device)
-        _update_job(job_id, details=f"Stem device: {stem_ai_device}; Whisper device: {whisper_ai_device}; Model: {whisper_model}; Language: {transcription_language}")
+        _update_job(
+            job_id,
+            details=f"Stem device: {stem_ai_device}; Whisper device: {whisper_ai_device}; Model: {whisper_model}; Language: {transcription_language}",
+        )
 
         stem_dir = _find_project_stems(project_dir, audio_path.stem)
         no_vocals_track = stem_dir / "no_vocals.wav" if stem_dir else None
@@ -1165,38 +1362,95 @@ def _run_audio_pipeline_job(
         vocals_track_mp3 = project_dir / f"{audio_path.stem}_vocals.mp3"
         chorus_track = project_dir / f"{audio_path.stem}_minus_chorus.mp3"
         if no_vocals_track and no_vocals_track.exists():
-            _update_job(job_id, stage="package stems", message=f"Packaging vocal/instrumental stems for {audio_path.name}", progress=demucs_end)
-            logger.info("[PIPELINE] job=%s packaging accompaniment=%s", job_id, no_vocals_track)
+            _update_job(
+                job_id,
+                stage="package stems",
+                message=f"Packaging vocal/instrumental stems for {audio_path.name}",
+                progress=demucs_end,
+            )
+            logger.info(
+                "[PIPELINE] job=%s packaging accompaniment=%s", job_id, no_vocals_track
+            )
             ffmpeg_res = subprocess.run(
-                [FFMPEG_BIN, "-y", "-i", str(no_vocals_track), "-q:a", "2", str(minus_track)],
+                [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-i",
+                    str(no_vocals_track),
+                    "-q:a",
+                    "2",
+                    str(minus_track),
+                ],
                 capture_output=True,
                 text=True,
             )
             if ffmpeg_res.returncode != 0:
-                logger.warning("[PIPELINE] job=%s accompaniment packaging failed: %s", job_id, (ffmpeg_res.stderr or "")[-300:])
-                _update_job(job_id, message=f"Separation complete, accompaniment packaging failed for {audio_path.name}")
+                logger.warning(
+                    "[PIPELINE] job=%s accompaniment packaging failed: %s",
+                    job_id,
+                    (ffmpeg_res.stderr or "")[-300:],
+                )
+                _update_job(
+                    job_id,
+                    message=f"Separation complete, accompaniment packaging failed for {audio_path.name}",
+                )
         if vocals_wav_track and vocals_wav_track.exists():
             vocals_res = subprocess.run(
-                [FFMPEG_BIN, "-y", "-i", str(vocals_wav_track), "-q:a", "2", str(vocals_track_mp3)],
+                [
+                    FFMPEG_BIN,
+                    "-y",
+                    "-i",
+                    str(vocals_wav_track),
+                    "-q:a",
+                    "2",
+                    str(vocals_track_mp3),
+                ],
                 capture_output=True,
                 text=True,
             )
             if vocals_res.returncode != 0:
-                logger.warning("[PIPELINE] job=%s vocals-only packaging failed: %s", job_id, (vocals_res.stderr or "")[-300:])
+                logger.warning(
+                    "[PIPELINE] job=%s vocals-only packaging failed: %s",
+                    job_id,
+                    (vocals_res.stderr or "")[-300:],
+                )
 
-        vocals_track = stem_dir / "vocals.wav" if stem_dir else project_dir / "vocals.wav"
+        vocals_track = (
+            stem_dir / "vocals.wav" if stem_dir else project_dir / "vocals.wav"
+        )
         lyrics_end = start_progress + int((end_progress - start_progress) * 0.65)
-        lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
+        lrc_file = (
+            _find_project_asset(project_dir, ".lrc", audio_path.stem)
+            or project_dir / f"{audio_path.stem}.lrc"
+        )
 
-        _update_job(job_id, stage="lyrics fetch", message=f"Fetching synced lyrics for {audio_path.name}", progress=demucs_end)
+        _update_job(
+            job_id,
+            stage="lyrics fetch",
+            message=f"Fetching synced lyrics for {audio_path.name}",
+            progress=demucs_end,
+        )
         _ensure_not_cancelled(job_id)
         synced_ok = _run_syncedlyrics(lyrics_search, lrc_file)
         if synced_ok and lrc_file.exists() and lrc_file.stat().st_size >= 10:
-            logger.info("[PIPELINE] job=%s syncedlyrics hit for %s", job_id, audio_path.name)
+            logger.info(
+                "[PIPELINE] job=%s syncedlyrics hit for %s", job_id, audio_path.name
+            )
             if no_vocals_track and no_vocals_track.exists():
-                _update_job(job_id, stage="package chorus stem", message=f"Building chorus-aware stem for {audio_path.name}", progress=max(0, end_progress - 2))
-                _build_chorus_aware_track(job_id, audio_path, no_vocals_track, lrc_file, chorus_track)
-            _update_job(job_id, progress=end_progress, message=f"Timed lyrics ready for {audio_path.name}")
+                _update_job(
+                    job_id,
+                    stage="package chorus stem",
+                    message=f"Building chorus-aware stem for {audio_path.name}",
+                    progress=max(0, end_progress - 2),
+                )
+                _build_chorus_aware_track(
+                    job_id, audio_path, no_vocals_track, lrc_file, chorus_track
+                )
+            _update_job(
+                job_id,
+                progress=end_progress,
+                message=f"Timed lyrics ready for {audio_path.name}",
+            )
             return
 
         whisper_end = end_progress
@@ -1216,12 +1470,23 @@ def _run_audio_pipeline_job(
         )
         lrc_content = _build_lrc_from_transcript_payload(transcript_payload)
         if not lrc_content.strip():
-            raise RuntimeError(f"Faster-Whisper produced no timed transcription for {audio_path.name}")
-        (project_dir / "vocals.json").write_text(json.dumps(transcript_payload, ensure_ascii=False), encoding="utf-8")
+            raise RuntimeError(
+                f"Faster-Whisper produced no timed transcription for {audio_path.name}"
+            )
+        (project_dir / "vocals.json").write_text(
+            json.dumps(transcript_payload, ensure_ascii=False), encoding="utf-8"
+        )
         lrc_file.write_text(lrc_content, encoding="utf-8")
         if no_vocals_track and no_vocals_track.exists():
-            _update_job(job_id, stage="package chorus stem", message=f"Building chorus-aware stem for {audio_path.name}", progress=max(0, end_progress - 2))
-            _build_chorus_aware_track(job_id, audio_path, no_vocals_track, lrc_file, chorus_track)
+            _update_job(
+                job_id,
+                stage="package chorus stem",
+                message=f"Building chorus-aware stem for {audio_path.name}",
+                progress=max(0, end_progress - 2),
+            )
+            _build_chorus_aware_track(
+                job_id, audio_path, no_vocals_track, lrc_file, chorus_track
+            )
         _update_job(
             job_id,
             details=(
@@ -1254,17 +1519,28 @@ def _download_with_ytdlp(job_id: str, url: str) -> Path:
         out_template,
         url,
     ]
-    _run_cancellable_command(job_id, cmd, f"Downloading source from URL", 5, 35)
-    produced = sorted(OUTPUT_DIR.glob(f"{temp_stem}_*.*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    _run_cancellable_command(job_id, cmd, "Downloading source from URL", 5, 35)
+    produced = sorted(
+        OUTPUT_DIR.glob(f"{temp_stem}_*.*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     if not produced:
         raise RuntimeError("yt-dlp completed but no output file was found")
     return produced[0]
 
 
-def _download_with_metube(job_id: str, url: str, *, start_progress: int = 20, end_progress: int = 35) -> tuple[Path, dict]:
+def _download_with_metube(
+    job_id: str, url: str, *, start_progress: int = 20, end_progress: int = 35
+) -> tuple[Path, dict]:
     known_files = {path.name for path in OUTPUT_DIR.iterdir() if _is_source_media(path)}
     expected = _probe_url_identity(url)
-    _update_job(job_id, status="running", progress=start_progress, message="Forwarding URL to MeTube")
+    _update_job(
+        job_id,
+        status="running",
+        progress=start_progress,
+        message="Forwarding URL to MeTube",
+    )
     _ensure_not_cancelled(job_id)
     target = f"{METUBE_URL.rstrip('/')}/add"
     resp = requests.post(target, json={"url": url}, timeout=8)
@@ -1289,6 +1565,7 @@ def _download_with_metube(job_id: str, url: str, *, start_progress: int = 20, en
     )
     return downloaded, identity
 
+
 def _run_url_job(
     job_id: str,
     url: str,
@@ -1301,7 +1578,9 @@ def _run_url_job(
     engine_norm = (engine or "ytdl").strip().lower()
     logger.info("[URL START] job=%s engine=%s url=%s", job_id, engine_norm, url)
     if engine_norm == "metube":
-        downloaded, identity = _download_with_metube(job_id, url, start_progress=20, end_progress=35)
+        downloaded, identity = _download_with_metube(
+            job_id, url, start_progress=20, end_progress=35
+        )
         rel_audio = _relative_to_output(downloaded)
         _run_audio_pipeline_job(
             job_id,
@@ -1346,9 +1625,19 @@ def _run_url_job(
         )
         if not needs_fallback:
             raise
-        logger.warning("[URL FALLBACK] job=%s ytdlp failed, retrying via MeTube: %s", job_id, err_text)
-        _update_job(job_id, message="yt-dlp failed (YouTube anti-bot/JS). Retrying via MeTube...", progress=15)
-        downloaded, identity = _download_with_metube(job_id, url, start_progress=20, end_progress=35)
+        logger.warning(
+            "[URL FALLBACK] job=%s ytdlp failed, retrying via MeTube: %s",
+            job_id,
+            err_text,
+        )
+        _update_job(
+            job_id,
+            message="yt-dlp failed (YouTube anti-bot/JS). Retrying via MeTube...",
+            progress=15,
+        )
+        downloaded, identity = _download_with_metube(
+            job_id, url, start_progress=20, end_progress=35
+        )
         rel_audio = _relative_to_output(downloaded)
 
     _run_audio_pipeline_job(
@@ -1365,6 +1654,12 @@ def _run_url_job(
     )
     logger.info("[URL END] job=%s downloaded=%s", job_id, downloaded.name)
 
+
+# ===============================================================
+# SECTION: Video Rendering (FFmpeg Canvas to Video Export)
+# Purpose: Render karaoke video with lyrics, effects, audio,
+#          and support for Final (no vocal), Chorus, and Preview
+# ===============================================================
 
 def _run_render_job(
     job_id: str,
@@ -1395,7 +1690,19 @@ def _run_render_job(
     render_height: int = 720,
     render_resolution: str = "",
     project_name: str = "",
+    ball_radius: int = 26,
+    arc_height: int = 78,
+    arc_fraction: float = 0.35,
+    bounce_per_sec: float = 0.1,
+    ball_color: str = "#ffffff",
+    ball_outline_color: str = "#000000",
 ) -> None:
+    # NOTE: "bouncing-ball" is rendered through the standard FFmpeg/ASS path
+    # below (see _build_bouncing_ball_events), which correctly honors
+    # render_source audio selection (final/chorus/preview), lyrics, and all FX.
+    # It must NOT be special-cased here.
+
+    # Standard FFmpeg rendering path
     preferred_device = _normalize_device(render_device, DEFAULT_RENDER_DEVICE)
     attempts = [preferred_device]
     if preferred_device != "cpu":
@@ -1447,15 +1754,27 @@ def _run_render_job(
                 render_token=render_token,
                 render_width=render_width,
                 render_height=render_height,
+                ball_radius=ball_radius,
+                arc_height=arc_height,
+                bounce_per_sec=bounce_per_sec,
+                ball_color=ball_color,
+                ball_outline_color=ball_outline_color,
             )
             _update_job(job_id, render_device=actual_device)
-            logger.info("[RENDER END] job=%s audio=%s device=%s", job_id, audio_filename, actual_device)
+            logger.info(
+                "[RENDER END] job=%s audio=%s device=%s",
+                job_id,
+                audio_filename,
+                actual_device,
+            )
             return
         except JobCancelledError:
             raise
         except Exception as exc:
             last_error = exc
-            logger.warning("[RENDER FAIL] job=%s device=%s error=%s", job_id, attempt_device, exc)
+            logger.warning(
+                "[RENDER FAIL] job=%s device=%s error=%s", job_id, attempt_device, exc
+            )
             if attempt_device == "cpu":
                 raise
 
@@ -1478,10 +1797,18 @@ def _run_lyrics_fetch_job(
     _update_job(job_id, audio_filename=rel_audio, project_name=audio_path.parent.name)
 
     project_dir = audio_path.parent
-    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = (
+        _find_project_asset(project_dir, ".lrc", audio_path.stem)
+        or project_dir / f"{audio_path.stem}.lrc"
+    )
     # Only skip when NOT an explicit user pull; a manual "Pull Lyrics" always re-fetches.
     if not force and _has_timed_lyrics(lrc_file):
-        _update_job(job_id, progress=100, message=f"Lyrics already exist for {audio_path.name}", status="completed")
+        _update_job(
+            job_id,
+            progress=100,
+            message=f"Lyrics already exist for {audio_path.name}",
+            status="completed",
+        )
         return
 
     selected_provider = str(provider or "syncedlyrics").strip().lower()
@@ -1498,46 +1825,82 @@ def _run_lyrics_fetch_job(
 
     _ensure_not_cancelled(job_id)
     if selected_provider == "auto":
-        identity = _derive_media_identity(path=audio_path, raw_name=display_title or audio_path.stem)
+        identity = _derive_media_identity(
+            path=audio_path, raw_name=display_title or audio_path.stem
+        )
         content, winning_provider = _fetch_best_lyrics(identity)
         lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
         timing_level, timestamp_count = _detect_timing_level(content)
-        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_names = {
+            3: "syllable-level",
+            2: "word-level",
+            1: "line-level",
+            0: "no-timing",
+        }
         timing_desc = timing_names.get(timing_level, "unknown")
-        selected_provider = f"auto ({winning_provider}) - {timing_desc} ({timestamp_count} timestamps)"
+        selected_provider = (
+            f"auto ({winning_provider}) - {timing_desc} ({timestamp_count} timestamps)"
+        )
     elif selected_provider == "syncedlyrics":
-        identity = _derive_media_identity(path=audio_path, raw_name=display_title or audio_path.stem)
+        identity = _derive_media_identity(
+            path=audio_path, raw_name=display_title or audio_path.stem
+        )
         lookup = lyrics_query or identity["display"] or audio_path.stem
         if not _run_syncedlyrics(lookup, lrc_file) or not _has_timed_lyrics(lrc_file):
             raise RuntimeError(f"Lyrics fetch failed for {audio_path.name}")
         content = lrc_file.read_text(encoding="utf-8")
         timing_level, timestamp_count = _detect_timing_level(content)
-        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_names = {
+            3: "syllable-level",
+            2: "word-level",
+            1: "line-level",
+            0: "no-timing",
+        }
         timing_desc = timing_names.get(timing_level, "unknown")
-        selected_provider = f"syncedlyrics - {timing_desc} ({timestamp_count} timestamps)"
+        selected_provider = (
+            f"syncedlyrics - {timing_desc} ({timestamp_count} timestamps)"
+        )
     else:
         _fetch_lyrics_for_media_with_provider(audio_path, selected_provider)
         if not _has_timed_lyrics(lrc_file):
-            raise RuntimeError(f"{selected_provider} did not produce timed lyrics for {audio_path.name}")
+            raise RuntimeError(
+                f"{selected_provider} did not produce timed lyrics for {audio_path.name}"
+            )
         content = lrc_file.read_text(encoding="utf-8")
         timing_level, timestamp_count = _detect_timing_level(content)
-        timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+        timing_names = {
+            3: "syllable-level",
+            2: "word-level",
+            1: "line-level",
+            0: "no-timing",
+        }
         timing_desc = timing_names.get(timing_level, "unknown")
-        selected_provider = f"{selected_provider} - {timing_desc} ({timestamp_count} timestamps)"
+        selected_provider = (
+            f"{selected_provider} - {timing_desc} ({timestamp_count} timestamps)"
+        )
 
     _ensure_not_cancelled(job_id)
     # Write metadata file to track which provider was used
     meta_file = lrc_file.with_suffix(".lrc.meta")
     try:
-        winning_provider_name = selected_provider.split(" ")[0] if " " in selected_provider else selected_provider
+        winning_provider_name = (
+            selected_provider.split(" ")[0]
+            if " " in selected_provider
+            else selected_provider
+        )
         meta_file.write_text(
             json.dumps({"provider": winning_provider_name, "fetched_at": time.time()}),
-            encoding="utf-8"
+            encoding="utf-8",
         )
     except Exception as e:
         logger.warning(f"Could not write metadata file: {e}")
-    
-    _update_job(job_id, progress=100, message=f"Lyrics ready via {selected_provider} for {audio_path.name}", status="completed")
+
+    _update_job(
+        job_id,
+        progress=100,
+        message=f"Lyrics ready via {selected_provider} for {audio_path.name}",
+        status="completed",
+    )
 
 
 def _run_word_timing_correction_job(
@@ -1579,20 +1942,38 @@ def _run_word_timing_correction_job(
         action_label="Aligning words with Faster-Whisper",
         initial_prompt=lrc_file.read_text(encoding="utf-8", errors="ignore"),
     )
-    json_path.write_text(json.dumps(aligned_payload, ensure_ascii=False), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(aligned_payload, ensure_ascii=False), encoding="utf-8"
+    )
 
-    _update_job(job_id, stage="apply word timing", message=f"Applying AI word timing to {lrc_file.name}", progress=80)
+    _update_job(
+        job_id,
+        stage="apply word timing",
+        message=f"Applying AI word timing to {lrc_file.name}",
+        progress=80,
+    )
     source_lrc = lrc_file.read_text(encoding="utf-8", errors="ignore")
     if timing_mode == "custom":
-        corrected_lrc = _minor_adjust_lrc_timing(source_lrc, aligned_payload, max_shift=max_offset_seconds)
+        corrected_lrc = _minor_adjust_lrc_timing(
+            source_lrc, aligned_payload, max_shift=max_offset_seconds
+        )
     elif timing_mode == "minor":
         corrected_lrc = _minor_adjust_lrc_timing(source_lrc, aligned_payload)
     else:
-        corrected_lrc = _rebuild_word_timed_lrc_from_alignment(source_lrc, aligned_payload)
+        corrected_lrc = _rebuild_word_timed_lrc_from_alignment(
+            source_lrc, aligned_payload
+        )
     lrc_file.write_text(corrected_lrc, encoding="utf-8")
 
-    mode_label = {"minor": "Minor", "custom": f"Custom (\u00b1{max_offset_seconds:g}s)"}.get(timing_mode, "Major")
-    _update_job(job_id, progress=100, message=f"{mode_label} AI timing correction complete for {audio_path.name}")
+    mode_label = {
+        "minor": "Minor",
+        "custom": f"Custom (\u00b1{max_offset_seconds:g}s)",
+    }.get(timing_mode, "Major")
+    _update_job(
+        job_id,
+        progress=100,
+        message=f"{mode_label} AI timing correction complete for {audio_path.name}",
+    )
 
 
 def _sync_project_jobs() -> None:
@@ -1610,10 +1991,21 @@ def _sync_project_jobs() -> None:
             continue
 
         if not manifest["has_stems"]:
-            _start_pipeline_if_idle(audio_path, project_name, display_title=project_name, lyrics_query=project_name)
+            _start_pipeline_if_idle(
+                audio_path,
+                project_name,
+                display_title=project_name,
+                lyrics_query=project_name,
+            )
             continue
 
-        if manifest["has_stems"] and not manifest["has_timed_lyrics"]:
+        # An untimed, nonempty LRC is a valid user-editable lyrics revision (for
+        # example after Clear All Timing), not a request to repeatedly auto-fetch.
+        if (
+            manifest["has_stems"]
+            and not manifest["has_timed_lyrics"]
+            and not manifest["has_lyrics_content"]
+        ):
             _enqueue_job(
                 "lyrics",
                 f"Fetch lyrics for {project_name}",
@@ -1731,13 +2123,23 @@ def _project_sidecar_paths(project_dir: Path, stem: str) -> list[Path]:
     ]
 
 
-def _find_project_asset(project_dir: Path, extension: str, preferred_stem: str = "") -> Path | None:
+def _find_project_asset(
+    project_dir: Path, extension: str, preferred_stem: str = ""
+) -> Path | None:
     suffix = extension.lower()
-    candidates = sorted(
-        [path for path in project_dir.iterdir() if path.is_file() and path.suffix.lower() == suffix],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    ) if project_dir.exists() else []
+    candidates = (
+        sorted(
+            [
+                path
+                for path in project_dir.iterdir()
+                if path.is_file() and path.suffix.lower() == suffix
+            ],
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if project_dir.exists()
+        else []
+    )
     if preferred_stem:
         preferred = project_dir / f"{preferred_stem}{suffix}"
         if preferred.exists() and preferred.is_file():
@@ -1749,7 +2151,11 @@ def _find_project_state(project_dir: Path) -> Path | None:
     preferred = project_dir / f"{project_dir.name}.proj.json"
     if preferred.exists() and preferred.is_file():
         return preferred
-    project_files = sorted(project_dir.glob("*.proj.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    project_files = sorted(
+        project_dir.glob("*.proj.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     if project_files:
         return project_files[0]
     return _find_project_asset(project_dir, ".json")
@@ -1762,7 +2168,11 @@ def _find_project_stems(project_dir: Path, audio_stem: str = "") -> Path | None:
         roots.append(preferred)
     stems_root = project_dir / "stems"
     if stems_root.is_dir():
-        roots.extend(path for path in stems_root.rglob("*") if path.is_dir() and path not in roots)
+        roots.extend(
+            path
+            for path in stems_root.rglob("*")
+            if path.is_dir() and path not in roots
+        )
     for root in roots:
         if any((root / name).is_file() for name in ("vocals.wav", "no_vocals.wav")):
             return root
@@ -1770,10 +2180,21 @@ def _find_project_stems(project_dir: Path, audio_stem: str = "") -> Path | None:
 
 
 def _rename_project_assets(project_dir: Path, project_name: str) -> None:
-    for path in sorted(project_dir.iterdir() if project_dir.exists() else [], key=lambda item: item.name.lower()):
-        if not path.is_file() or path.suffix.lower() not in {".lrc", ".ass"} and not path.name.lower().endswith(".proj.json"):
+    for path in sorted(
+        project_dir.iterdir() if project_dir.exists() else [],
+        key=lambda item: item.name.lower(),
+    ):
+        if (
+            not path.is_file()
+            or path.suffix.lower() not in {".lrc", ".ass"}
+            and not path.name.lower().endswith(".proj.json")
+        ):
             continue
-        suffix = ".proj.json" if path.name.lower().endswith(".proj.json") else path.suffix.lower()
+        suffix = (
+            ".proj.json"
+            if path.name.lower().endswith(".proj.json")
+            else path.suffix.lower()
+        )
         target = project_dir / f"{project_name}{suffix}"
         if path == target:
             continue
@@ -1787,12 +2208,17 @@ def _rename_project_assets(project_dir: Path, project_name: str) -> None:
 def _project_has_active_jobs(project_name: str) -> bool:
     return any(
         job.get("status") in {"queued", "running"}
-        and (job.get("project_name") == project_name or str(job.get("audio_filename") or "").startswith(f"{project_name}/"))
+        and (
+            job.get("project_name") == project_name
+            or str(job.get("audio_filename") or "").startswith(f"{project_name}/")
+        )
         for job in JOBS.values()
     )
 
 
-def _rewrite_project_references(old_project: str, new_project: str, old_rel_audio: str, new_rel_audio: str) -> None:
+def _rewrite_project_references(
+    old_project: str, new_project: str, old_rel_audio: str, new_rel_audio: str
+) -> None:
     with JOB_LOCK:
         for job in JOBS.values():
             if job.get("audio_filename") == old_rel_audio:
@@ -1807,7 +2233,9 @@ def _rewrite_project_references(old_project: str, new_project: str, old_rel_audi
                     runner_kwargs["project_name"] = new_project
             target_key = job.get("target_key")
             if isinstance(target_key, str) and target_key:
-                job["target_key"] = target_key.replace(old_rel_audio, new_rel_audio).replace(old_project, new_project)
+                job["target_key"] = target_key.replace(
+                    old_rel_audio, new_rel_audio
+                ).replace(old_project, new_project)
             for field in ("label", "message", "details"):
                 value = job.get(field)
                 if isinstance(value, str) and value:
@@ -1827,7 +2255,10 @@ def _finalize_pending_project_renames() -> list[dict]:
         for old_name, new_name in ready:
             old_project = OUTPUT_DIR / old_name
             target_project = OUTPUT_DIR / new_name
-            if not old_project.is_dir() or (target_project.exists() and target_project.resolve() != old_project.resolve()):
+            if not old_project.is_dir() or (
+                target_project.exists()
+                and target_project.resolve() != old_project.resolve()
+            ):
                 PENDING_PROJECT_RENAMES.pop(old_name, None)
                 continue
 
@@ -1838,7 +2269,10 @@ def _finalize_pending_project_renames() -> list[dict]:
             )
             if not audio_candidates:
                 PENDING_PROJECT_RENAMES.pop(old_name, None)
-                logger.warning("[RENAME] skipped project=%s because it has no source media", old_name)
+                logger.warning(
+                    "[RENAME] skipped project=%s because it has no source media",
+                    old_name,
+                )
                 continue
 
             old_rel_audio = _relative_to_output(audio_candidates[0])
@@ -1846,7 +2280,10 @@ def _finalize_pending_project_renames() -> list[dict]:
                 old_project.rename(target_project)
             _rename_project_assets(target_project, target_project.name)
 
-            target_audio = next((path for path in target_project.iterdir() if _is_source_media(path)), None)
+            target_audio = next(
+                (path for path in target_project.iterdir() if _is_source_media(path)),
+                None,
+            )
             if not target_audio:
                 PENDING_PROJECT_RENAMES.pop(old_name, None)
                 continue
@@ -1858,14 +2295,30 @@ def _finalize_pending_project_renames() -> list[dict]:
                     if isinstance(payload, dict):
                         payload["project_name"] = target_project.name
                         payload["audio_filename"] = new_rel_audio
-                        renamed_proj.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                        renamed_proj.write_text(
+                            json.dumps(payload, indent=2, ensure_ascii=False),
+                            encoding="utf-8",
+                        )
                 except Exception:
-                    logger.warning("[RENAME] could not update project state for %s", target_project.name)
+                    logger.warning(
+                        "[RENAME] could not update project state for %s",
+                        target_project.name,
+                    )
 
-            _rewrite_project_references(old_name, target_project.name, old_rel_audio, new_rel_audio)
+            _rewrite_project_references(
+                old_name, target_project.name, old_rel_audio, new_rel_audio
+            )
             PENDING_PROJECT_RENAMES.pop(old_name, None)
-            completed.append({"old_project": old_name, "project_name": target_project.name, "audio_filename": new_rel_audio})
-            logger.info("[RENAME] finalized project=%s -> %s", old_name, target_project.name)
+            completed.append(
+                {
+                    "old_project": old_name,
+                    "project_name": target_project.name,
+                    "audio_filename": new_rel_audio,
+                }
+            )
+            logger.info(
+                "[RENAME] finalized project=%s -> %s", old_name, target_project.name
+            )
     return completed
 
 
@@ -1886,9 +2339,13 @@ def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
     target_audio = project_dir / audio_path.name
     if target_audio.exists() and target_audio.resolve() != audio_path.resolve():
         counter = 2
-        while (project_dir / f"{audio_path.stem}_{counter}{audio_path.suffix or '.mp3'}").exists():
+        while (
+            project_dir / f"{audio_path.stem}_{counter}{audio_path.suffix or '.mp3'}"
+        ).exists():
             counter += 1
-        target_audio = project_dir / f"{audio_path.stem}_{counter}{audio_path.suffix or '.mp3'}"
+        target_audio = (
+            project_dir / f"{audio_path.stem}_{counter}{audio_path.suffix or '.mp3'}"
+        )
     if target_audio != audio_path:
         audio_path.rename(target_audio)
     old_stem = audio_path.stem
@@ -1910,7 +2367,8 @@ def _project_manifest(project_dir: Path) -> dict | None:
     audio_files = sorted(
         [path for path in project_dir.iterdir() if _is_source_media(path)],
         key=lambda path: (
-            path.suffix.lower() not in {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"},
+            path.suffix.lower()
+            not in {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"},
             -path.stat().st_mtime,
         ),
     )
@@ -1923,6 +2381,9 @@ def _project_manifest(project_dir: Path) -> dict | None:
     lrc_path = _find_project_asset(project_dir, ".lrc", audio_stem)
     stems_dir = _find_project_stems(project_dir, audio_stem)
     has_stems = stems_dir is not None
+    has_lyrics_content = bool(
+        lrc_path and lrc_path.is_file() and lrc_path.stat().st_size > 0
+    )
     has_timed_lyrics = _has_timed_lyrics(lrc_path)
     proj_path = _find_project_state(project_dir)
     has_proj = proj_path is not None
@@ -1945,9 +2406,14 @@ def _project_manifest(project_dir: Path) -> dict | None:
         "type": audio_path.suffix.lower(),
         "audio_name": audio_path.name,
         "lrc_filename": _relative_to_output(lrc_path) if lrc_path else "",
-        "ass_filename": _relative_to_output(_find_project_asset(project_dir, ".ass", audio_stem)) if _find_project_asset(project_dir, ".ass", audio_stem) else "",
+        "ass_filename": (
+            _relative_to_output(_find_project_asset(project_dir, ".ass", audio_stem))
+            if _find_project_asset(project_dir, ".ass", audio_stem)
+            else ""
+        ),
         "project_state_filename": _relative_to_output(proj_path) if proj_path else "",
         "has_stems": has_stems,
+        "has_lyrics_content": has_lyrics_content,
         "has_timed_lyrics": has_timed_lyrics,
         "has_proj": has_proj,
         "has_chorus_stem": has_chorus_stem,
@@ -1964,7 +2430,9 @@ def _list_project_manifests() -> list[dict]:
                 manifests.append(manifest)
 
     # Compatibility migration path: convert loose top-level media files into project folders.
-    for path in sorted(OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    for path in sorted(
+        OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
         if not _is_source_media(path):
             continue
         moved = _ensure_project_layout_for_audio(path)
@@ -1976,6 +2444,7 @@ def _list_project_manifests() -> list[dict]:
     for item in manifests:
         dedup[item["project_name"]] = item
     return sorted(dedup.values(), key=lambda item: item["project_name"].lower())
+
 
 def _start_pipeline_if_idle(
     audio_path: Path,
@@ -2025,6 +2494,7 @@ def _is_source_media(path: Path) -> bool:
         return False
     return True
 
+
 def _resolve_output_file(filename: str) -> Path:
     candidate = _resolve_output_path(filename, require_exists=True)
     if not candidate.exists() or not candidate.is_file():
@@ -2032,12 +2502,25 @@ def _resolve_output_file(filename: str) -> Path:
     return candidate
 
 
+# ===============================================================
+# SECTION: Lyrics Fetching & Processing (Multiple Sources)
+# Purpose: Fetch lyrics from LRCLib, Genius, SyncedLyrics APIs
+#          with ranking, normalization, and LRC format conversion
+# ===============================================================
+
 def _fetch_lyrics_for_media(audio_path: Path) -> str:
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
-    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = (
+        _find_project_asset(project_dir, ".lrc", audio_path.stem)
+        or project_dir / f"{audio_path.stem}.lrc"
+    )
     identity = _derive_media_identity(path=audio_path, raw_name=audio_path.stem)
-    if not _run_syncedlyrics(identity["display"], lrc_file) or not lrc_file.exists() or lrc_file.stat().st_size < 10:
+    if (
+        not _run_syncedlyrics(identity["display"], lrc_file)
+        or not lrc_file.exists()
+        or lrc_file.stat().st_size < 10
+    ):
         raise RuntimeError("Lyrics lookup failed")
     return lrc_file.read_text(encoding="utf-8")
 
@@ -2093,17 +2576,26 @@ def _fetch_lyrics_from_lrclib(identity: dict) -> str:
     headers = {"User-Agent": "OnePageKaraoke/1.0"}
     for params in candidates:
         try:
-            res = requests.get("https://lrclib.net/api/search", params=params, headers=headers, timeout=12)
+            res = requests.get(
+                "https://lrclib.net/api/search",
+                params=params,
+                headers=headers,
+                timeout=12,
+            )
             if res.status_code >= 400:
                 continue
             payload = res.json()
             if not isinstance(payload, list) or not payload:
                 continue
             entries = [entry for entry in payload if isinstance(entry, dict)]
-            ranked = sorted(entries, key=lambda entry: (
-                _lyrics_result_relevance(identity, entry),
-                bool(str(entry.get("syncedLyrics") or "").strip()),
-            ), reverse=True)
+            ranked = sorted(
+                entries,
+                key=lambda entry: (
+                    _lyrics_result_relevance(identity, entry),
+                    bool(str(entry.get("syncedLyrics") or "").strip()),
+                ),
+                reverse=True,
+            )
             for entry in ranked:
                 relevance = _lyrics_result_relevance(identity, entry)
                 if relevance < 0.6:
@@ -2120,7 +2612,9 @@ def _fetch_lyrics_from_lrclib(identity: dict) -> str:
 
 
 def _extract_genius_path(search_payload: dict) -> str:
-    response = search_payload.get("response") if isinstance(search_payload, dict) else {}
+    response = (
+        search_payload.get("response") if isinstance(search_payload, dict) else {}
+    )
     sections = response.get("sections") if isinstance(response, dict) else []
     if not isinstance(sections, list):
         return ""
@@ -2155,7 +2649,12 @@ def _fetch_lyrics_from_genius(identity: dict) -> str:
         raise RuntimeError("Missing title for Genius lookup")
 
     headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) OnePageKaraoke/1.0"}
-    search_res = requests.get("https://genius.com/api/search/multi", params={"q": query}, headers=headers, timeout=12)
+    search_res = requests.get(
+        "https://genius.com/api/search/multi",
+        params={"q": query},
+        headers=headers,
+        timeout=12,
+    )
     if search_res.status_code >= 400:
         raise RuntimeError(f"Genius search failed with status {search_res.status_code}")
     path = _extract_genius_path(search_res.json())
@@ -2164,10 +2663,16 @@ def _fetch_lyrics_from_genius(identity: dict) -> str:
 
     page_res = requests.get(f"https://genius.com{path}", headers=headers, timeout=12)
     if page_res.status_code >= 400:
-        raise RuntimeError(f"Genius lyrics page failed with status {page_res.status_code}")
+        raise RuntimeError(
+            f"Genius lyrics page failed with status {page_res.status_code}"
+        )
     page = page_res.text or ""
 
-    blocks = re.findall(r'<div[^>]+data-lyrics-container="true"[^>]*>(.*?)</div>', page, flags=re.IGNORECASE | re.DOTALL)
+    blocks = re.findall(
+        r'<div[^>]+data-lyrics-container="true"[^>]*>(.*?)</div>',
+        page,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     if not blocks:
         raise RuntimeError("Could not extract lyrics from Genius page")
     merged = "\n".join(_strip_html_to_text(block) for block in blocks if block.strip())
@@ -2182,12 +2687,16 @@ def _fetch_lyrics_from_syncedlyrics(identity: dict) -> str:
     if not lookup:
         raise RuntimeError("Missing title for syncedlyrics lookup")
 
-    output_file = tempfile.NamedTemporaryFile(prefix="onepage-lyrics-", suffix=".lrc", delete=False)
+    output_file = tempfile.NamedTemporaryFile(
+        prefix="onepage-lyrics-", suffix=".lrc", delete=False
+    )
     output_path = Path(output_file.name)
     output_file.close()
     try:
         ok = _run_syncedlyrics(lookup, output_path, timeout=20)
-        content = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+        content = (
+            output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+        )
         if not ok or not content.strip():
             raise RuntimeError("syncedlyrics returned no lyrics")
         return content
@@ -2208,43 +2717,56 @@ def _detect_timing_level(content: str) -> tuple[int, int]:
     lines = str(content or "").splitlines()
     if not lines:
         return 0, 0
-    
+
     # Count timestamps per line
     timestamps_per_line = []
     total_timestamps = 0
     single_word_timed_lines = 0
-    
+
     for line in lines:
         line_timestamps = len(re.findall(r"\[\d+:\d+(?:\.\d+)?\]", line))
         if line_timestamps > 0:
             timestamps_per_line.append(line_timestamps)
             total_timestamps += line_timestamps
             # A timed line carrying a single word is word/syllable-level timing.
-            text_only = _WORD_END_TAG_RE.sub("", re.sub(r"\[\d+:\d+(?:\.\d+)?\]", "", line)).strip()
+            text_only = _WORD_END_TAG_RE.sub(
+                "", re.sub(r"\[\d+:\d+(?:\.\d+)?\]", "", line)
+            ).strip()
             if text_only and len(text_only.split()) == 1:
                 single_word_timed_lines += 1
-    
+
     if total_timestamps == 0:
         return 0, 0  # No timing
-    
-    avg_timestamps_per_line = total_timestamps / len(timestamps_per_line) if timestamps_per_line else 0
+
+    avg_timestamps_per_line = (
+        total_timestamps / len(timestamps_per_line) if timestamps_per_line else 0
+    )
 
     # One-word-per-line LRC (enhanced or manual word timing) is genuinely word-level even
     # though each line only carries a single [mm:ss] tag.
-    if timestamps_per_line and (single_word_timed_lines / len(timestamps_per_line)) >= 0.7:
+    if (
+        timestamps_per_line
+        and (single_word_timed_lines / len(timestamps_per_line)) >= 0.7
+    ):
         if total_timestamps >= 20:
             return 3, total_timestamps  # dense word/syllable-level
         if total_timestamps >= 8:
             return 2, total_timestamps  # word-level
-    
+
     # Check for synthetic timing (uniform 1.5s deltas)
     all_timestamps = []
-    for minutes, seconds in re.findall(r"\[(\d+):(\d+(?:\.\d+)?)\]", str(content or "")):
+    for minutes, seconds in re.findall(
+        r"\[(\d+):(\d+(?:\.\d+)?)\]", str(content or "")
+    ):
         all_timestamps.append((int(minutes) * 60) + float(seconds))
-    
-    deltas = [later - earlier for earlier, later in zip(all_timestamps, all_timestamps[1:]) if later > earlier]
+
+    deltas = [
+        later - earlier
+        for earlier, later in zip(all_timestamps, all_timestamps[1:])
+        if later > earlier
+    ]
     is_synthetic = bool(deltas) and all(abs(delta - 1.5) < 0.03 for delta in deltas)
-    
+
     # Detect timing level
     if avg_timestamps_per_line >= 4 and total_timestamps >= 20 and not is_synthetic:
         return 3, total_timestamps  # Syllable-level
@@ -2282,7 +2804,9 @@ def _fetch_best_lyrics(identity: dict) -> tuple[str, str]:
     results = []
     errors = []
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(fetchers))
-    futures = {executor.submit(fetcher): provider for provider, fetcher in fetchers.items()}
+    futures = {
+        executor.submit(fetcher): provider for provider, fetcher in fetchers.items()
+    }
     try:
         for future in concurrent.futures.as_completed(futures, timeout=25):
             provider = futures[future]
@@ -2299,20 +2823,35 @@ def _fetch_best_lyrics(identity: dict) -> tuple[str, str]:
 
     if not results:
         raise RuntimeError("No lyrics provider returned a result. " + "; ".join(errors))
-    
+
     # Select best result prioritizing timing level, then provider weight
     def score_result(item):
         content, provider = item
         timing_level, timestamp_count, content_length = _lyrics_timing_quality(content)
         # Score: (timing_level, provider_weight, timestamp_count, content_length)
         # This ensures syllable > word > line > no-timing, with provider weight as tiebreaker
-        return (timing_level, provider_weight.get(provider, 0), timestamp_count, content_length)
-    
+        return (
+            timing_level,
+            provider_weight.get(provider, 0),
+            timestamp_count,
+            content_length,
+        )
+
     content, provider = max(results, key=score_result)
     timing_level, timestamp_count, _ = _lyrics_timing_quality(content)
-    timing_names = {3: "syllable-level", 2: "word-level", 1: "line-level", 0: "no-timing"}
+    timing_names = {
+        3: "syllable-level",
+        2: "word-level",
+        1: "line-level",
+        0: "no-timing",
+    }
     timing_desc = timing_names.get(timing_level, "unknown")
-    logger.info("[LYRICS AUTO] selected provider=%s timing=%s count=%d", provider, timing_desc, timestamp_count)
+    logger.info(
+        "[LYRICS AUTO] selected provider=%s timing=%s count=%d",
+        provider,
+        timing_desc,
+        timestamp_count,
+    )
     return content, provider
 
 
@@ -2323,7 +2862,10 @@ def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> st
     """
     audio_path = _ensure_project_layout_for_audio(audio_path)
     project_dir = audio_path.parent
-    lrc_file = _find_project_asset(project_dir, ".lrc", audio_path.stem) or project_dir / f"{audio_path.stem}.lrc"
+    lrc_file = (
+        _find_project_asset(project_dir, ".lrc", audio_path.stem)
+        or project_dir / f"{audio_path.stem}.lrc"
+    )
     identity = _derive_media_identity(path=audio_path, raw_name=audio_path.stem)
 
     selected = str(provider or "").strip().lower()
@@ -2338,7 +2880,7 @@ def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> st
             content = _fetch_lyrics_from_lrclib(identity)
         else:
             content = _fetch_lyrics_from_genius(identity)
-        
+
         if str(content or "").strip():
             timing_level, timestamp_count = _detect_timing_level(content)
             if timing_level > 0:  # Has timing data
@@ -2346,13 +2888,13 @@ def _fetch_lyrics_for_media_with_provider(audio_path: Path, provider: str) -> st
                 return lrc_file.read_text(encoding="utf-8")
     except Exception as e:
         logger.warning("[LYRICS PROVIDER] %s failed: %s, trying fallback", selected, e)
-    
+
     # If selected provider failed or returned no timing, use auto-fetch to find best timing
     logger.info("[LYRICS PROVIDER] Falling back to auto-detect for better timing level")
     content, _ = _fetch_best_lyrics(identity)
-    
+
     if not str(content or "").strip():
-        raise RuntimeError(f"No lyrics with timing available from any provider")
+        raise RuntimeError("No lyrics with timing available from any provider")
     lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
     return lrc_file.read_text(encoding="utf-8")
 
@@ -2382,7 +2924,73 @@ def _extract_lrc_words(lrc_text: str) -> list[str]:
     return words
 
 
-def _detect_lrc_chorus_ranges(lrc_path: Path | None, min_repeats: int = 2, min_block: int = 2) -> list[tuple[float, float]]:
+CHORUS_MARK = "*"
+# A manually-marked chorus word looks like: [00:12.34]*word<00:12.90>
+# The marker sits between the start tag and the word so existing timestamp
+# regexes (which only match the bracketed tags) are unaffected.
+_CHORUS_MARK_RE = re.compile(r"(\[\d+:\d+(?:\.\d{1,3})?\])\s*\*")
+
+
+def _parse_manual_chorus_ranges(lrc_path: Path | None) -> list[tuple[float, float]]:
+    """Read user-marked chorus words from the LRC and return their time ranges.
+
+    Each marked word contributes the span from its own start tag to either its
+    explicit end tag (<mm:ss.xx>) or the next word's start. Adjacent marked
+    words merge into continuous ranges so the vocal doesn't stutter on and off.
+    """
+    if not lrc_path or not lrc_path.exists():
+        return []
+    content = lrc_path.read_text(encoding="utf-8", errors="ignore")
+    tag_regex = re.compile(r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]")
+    end_regex = re.compile(r"<(\d+):(\d+)(?:\.(\d{1,3}))?>")
+
+    def _to_sec(mm: str, ss: str, frac: str | None) -> float:
+        frac_str = frac or "0"
+        # 3 digits means milliseconds; fewer means hundredths.
+        denom = 1000.0 if len(frac_str) == 3 else 100.0
+        value = float(frac_str) if len(frac_str) == 3 else float(frac_str.ljust(2, "0"))
+        return int(mm) * 60 + int(ss) + value / denom
+
+    entries: list[tuple[float, float | None, bool]] = []
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        start_match = tag_regex.search(stripped)
+        if not start_match:
+            continue
+        start = _to_sec(*start_match.groups())
+        marked = bool(_CHORUS_MARK_RE.search(stripped))
+        end_match = end_regex.search(stripped)
+        end = _to_sec(*end_match.groups()) if end_match else None
+        entries.append((start, end, marked))
+
+    if not any(marked for _, _, marked in entries):
+        return []
+    entries.sort(key=lambda item: item[0])
+
+    ranges: list[tuple[float, float]] = []
+    for idx, (start, end, marked) in enumerate(entries):
+        if not marked:
+            continue
+        stop = end
+        if stop is None or stop <= start:
+            stop = entries[idx + 1][0] if idx + 1 < len(entries) else start + 4.0
+        ranges.append((start, max(stop, start + 0.05)))
+
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(ranges):
+        # Bridge tiny gaps so consecutive marked words play as one phrase.
+        if merged and start <= merged[-1][1] + 0.35:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _detect_lrc_chorus_ranges(
+    lrc_path: Path | None, min_repeats: int = 2, min_block: int = 2
+) -> list[tuple[float, float]]:
     """Find chorus sections by detecting repeated timed-lyric line blocks (no separate AI model needed)."""
     if not lrc_path or not lrc_path.exists():
         return []
@@ -2417,12 +3025,13 @@ def _detect_lrc_chorus_ranges(lrc_path: Path | None, min_repeats: int = 2, min_b
         for i in range(len(normalized) - block_size + 1):
             if any(j in used for j in range(i, i + block_size)):
                 continue
-            block = tuple(normalized[i:i + block_size])
+            block = tuple(normalized[i : i + block_size])
             if not any(block):
                 continue
             occurrences = [
-                j for j in range(len(normalized) - block_size + 1)
-                if tuple(normalized[j:j + block_size]) == block
+                j
+                for j in range(len(normalized) - block_size + 1)
+                if tuple(normalized[j : j + block_size]) == block
             ]
             if len(occurrences) >= min_repeats:
                 for occ in occurrences:
@@ -2450,55 +3059,101 @@ def _detect_lrc_chorus_ranges(lrc_path: Path | None, min_repeats: int = 2, min_b
     return merged
 
 
-def _build_chorus_aware_track(job_id: str, audio_path: Path, no_vocals_path: Path, lrc_path: Path | None, output_path: Path) -> None:
-    """Instrumental everywhere, but the original vocals play during detected chorus sections."""
-    chorus_ranges = _detect_lrc_chorus_ranges(lrc_path)
+def _build_chorus_aware_track(
+    job_id: str,
+    audio_path: Path,
+    no_vocals_path: Path,
+    lrc_path: Path | None,
+    output_path: Path,
+) -> None:
+    """Instrumental everywhere, but the original vocals play during chorus sections.
+
+    User-marked words (see _parse_manual_chorus_ranges) take priority; when the
+    user hasn't marked anything we fall back to repeated-block auto-detection.
+    """
+    chorus_ranges = _parse_manual_chorus_ranges(lrc_path)
+    if chorus_ranges:
+        logger.info(
+            "[CHORUS STEM] job=%s using %d manually marked range(s)",
+            job_id,
+            len(chorus_ranges),
+        )
+    else:
+        chorus_ranges = _detect_lrc_chorus_ranges(lrc_path)
     if not chorus_ranges:
         res = subprocess.run(
-            [FFMPEG_BIN, "-y", "-i", str(no_vocals_path), "-q:a", "2", str(output_path)],
+            [
+                FFMPEG_BIN,
+                "-y",
+                "-i",
+                str(no_vocals_path),
+                "-q:a",
+                "2",
+                str(output_path),
+            ],
             capture_output=True,
             text=True,
         )
         if res.returncode != 0:
-            logger.warning("[CHORUS STEM] job=%s no-chorus fallback failed: %s", job_id, (res.stderr or "")[-300:])
+            logger.warning(
+                "[CHORUS STEM] job=%s no-chorus fallback failed: %s",
+                job_id,
+                (res.stderr or "")[-300:],
+            )
         return
 
-    enable_expr = "+".join(f"between(t,{start:.3f},{end:.3f})" for start, end in chorus_ranges)
+    enable_expr = "+".join(
+        f"between(t,{start:.3f},{end:.3f})" for start, end in chorus_ranges
+    )
     filter_complex = (
         f"[0:a]volume=0:enable='not({enable_expr})'[full];"
         f"[1:a]volume=0:enable='{enable_expr}'[instr];"
         "[full][instr]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]"
     )
     cmd = [
-        FFMPEG_BIN, "-y",
-        "-i", str(audio_path),
-        "-i", str(no_vocals_path),
-        "-filter_complex", filter_complex,
-        "-map", "[out]",
-        "-q:a", "2",
+        FFMPEG_BIN,
+        "-y",
+        "-i",
+        str(audio_path),
+        "-i",
+        str(no_vocals_path),
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[out]",
+        "-q:a",
+        "2",
         str(output_path),
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        logger.warning("[CHORUS STEM] job=%s build failed: %s", job_id, (res.stderr or "")[-500:])
+        logger.warning(
+            "[CHORUS STEM] job=%s build failed: %s", job_id, (res.stderr or "")[-500:]
+        )
 
 
 def _extract_alignment_words(json_payload: dict) -> list[dict]:
     out: list[dict] = []
-    for seg in (json_payload.get("segments") or []):
-        for item in (seg.get("words") or []):
+    for seg in json_payload.get("segments") or []:
+        for item in seg.get("words") or []:
             token = str(item.get("word") or "").strip()
             if not token:
                 continue
             start = item.get("start")
             if not isinstance(start, (int, float)):
                 continue
-            out.append({
-                "word": token,
-                "norm": _normalize_word_token(token),
-                "start": float(start),
-                "end": float(item["end"]) if isinstance(item.get("end"), (int, float)) else None,
-            })
+            out.append(
+                {
+                    "word": token,
+                    "norm": _normalize_word_token(token),
+                    "start": float(start),
+                    "end": (
+                        float(item["end"])
+                        if isinstance(item.get("end"), (int, float))
+                        else None
+                    ),
+                }
+            )
     return _normalize_alignment_word_boundaries(out)
 
 
@@ -2521,7 +3176,9 @@ def _normalize_alignment_word_boundaries(words: list[dict]) -> list[dict]:
     return normalized
 
 
-def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: dict) -> str:
+def _rebuild_word_timed_lrc_from_alignment(
+    lrc_content: str, alignment_payload: dict
+) -> str:
     lyric_words = _extract_lrc_words(lrc_content)
     aligned_words = _extract_alignment_words(alignment_payload)
 
@@ -2557,7 +3214,9 @@ def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: 
 
         start = max(last_time, float(matched["start"]))
         end = matched.get("end")
-        end = float(end) if isinstance(end, (int, float)) and float(end) > start else None
+        end = (
+            float(end) if isinstance(end, (int, float)) and float(end) > start else None
+        )
         last_time = end if end is not None else start
         resolved.append({"word": lyric_word, "start": start, "end": end})
 
@@ -2569,14 +3228,20 @@ def _rebuild_word_timed_lrc_from_alignment(lrc_content: str, alignment_payload: 
         next_start = resolved[i + 1]["start"] if i + 1 < len(resolved) else None
         line = f"[{_format_lrc_timestamp(cur['start'])}]{cur['word']}"
         end = cur.get("end")
-        if end is not None and end > cur["start"] and (next_start is None or end < next_start - 0.03):
+        if (
+            end is not None
+            and end > cur["start"]
+            and (next_start is None or end < next_start - 0.03)
+        ):
             line += f"<{_format_lrc_timestamp(end)}>"
         corrected_lines.append(line)
 
     return "\n".join(corrected_lines)
 
 
-def _minor_adjust_lrc_timing(lrc_content: str, alignment_payload: dict, max_shift: float = 2.0) -> str:
+def _minor_adjust_lrc_timing(
+    lrc_content: str, alignment_payload: dict, max_shift: float = 2.0
+) -> str:
     """Adjust existing line timestamps without changing lyric text or structure."""
     aligned_words = _extract_alignment_words(alignment_payload)
     if not aligned_words:
@@ -2612,7 +3277,9 @@ def _minor_adjust_lrc_timing(lrc_content: str, alignment_payload: dict, max_shif
         adjusted_time = original_time
         if matched:
             proposed = float(matched["start"])
-            adjusted_time = max(original_time - max_shift, min(original_time + max_shift, proposed))
+            adjusted_time = max(
+                original_time - max_shift, min(original_time + max_shift, proposed)
+            )
             adjusted_count += 1
         adjusted_time = max(last_time, adjusted_time)
         last_time = adjusted_time
@@ -2658,9 +3325,21 @@ def _render_video_encoder_args(render_device: str) -> list[str]:
         if "h264_nvenc" in encoders:
             runtime_probe = subprocess.run(
                 [
-                    FFMPEG_BIN, "-hide_banner", "-loglevel", "error",
-                    "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1",
-                    "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
+                    FFMPEG_BIN,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:r=1",
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    "h264_nvenc",
+                    "-f",
+                    "null",
+                    "-",
                 ],
                 capture_output=True,
                 text=True,
@@ -2673,12 +3352,93 @@ def _render_video_encoder_args(render_device: str) -> list[str]:
                 (runtime_probe.stderr or "unknown error").strip()[-500:],
             )
         else:
-            logger.warning("[GPU CHECK] FFmpeg does not expose h264_nvenc; using CPU encoder")
+            logger.warning(
+                "[GPU CHECK] FFmpeg does not expose h264_nvenc; using CPU encoder"
+            )
     if "libx264" in encoders:
         return ["-c:v", "libx264", "-crf", "26"]
     if "libopenh264" in encoders:
         return ["-c:v", "libopenh264", "-b:v", "3M"]
     return ["-c:v", "mpeg4", "-q:v", "5"]
+
+
+def _render_static_background(
+    kind: str,
+    color_a: tuple[int, int, int],
+    color_b: tuple[int, int, int],
+    width: int,
+    height: int,
+    project_dir: Path,
+) -> Path:
+    """Rasterize a static gradient/spiral background to a PNG exactly once.
+
+    Previously these were produced by ffmpeg's `geq` filter, which re-evaluates a
+    per-pixel arithmetic expression on a single CPU thread for every frame. That
+    bottlenecks the whole pipeline and leaves the NVENC encoder idle, so GPU
+    renders performed no better than CPU ones. The output is identical because
+    the background never changes over time.
+    """
+    from PIL import Image
+
+    r1, g1, b1 = color_a
+    r2, g2, b2 = color_b
+    key = f"{kind}-{r1}_{g1}_{b1}-{r2}_{g2}_{b2}-{width}x{height}"
+    cache_path = project_dir / f".bg_{_safe_output_name(key, 'bg')}.png"
+    if cache_path.exists():
+        return cache_path
+
+    img = Image.new("RGB", (width, height))
+    try:
+        import numpy as np
+
+        if kind == "gradient":
+            t = (np.arange(height, dtype=np.float32) / max(1, height))[:, None]
+            t = np.repeat(t, width, axis=1)
+        else:
+            xs = np.arange(width, dtype=np.float32) - width / 2.0
+            ys = np.arange(height, dtype=np.float32) - height / 2.0
+            t = np.sqrt(xs[None, :] ** 2 + ys[:, None] ** 2) / (0.78 * max(1, height))
+            t = np.minimum(1.0, t)
+        arr = np.stack(
+            [
+                r1 + (r2 - r1) * t,
+                g1 + (g2 - g1) * t,
+                b1 + (b2 - b1) * t,
+            ],
+            axis=-1,
+        )
+        img = Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8), "RGB")
+    except Exception:
+        px = img.load()
+        if kind == "gradient":
+            # Vertical ramp: matches geq r='r1+(r2-r1)*Y/H'
+            for y in range(height):
+                tv = y / height if height else 0.0
+                row = (
+                    round(r1 + (r2 - r1) * tv),
+                    round(g1 + (g2 - g1) * tv),
+                    round(b1 + (b2 - b1) * tv),
+                )
+                for x in range(width):
+                    px[x, y] = row
+        else:
+            # Radial ramp: matches geq min(1, sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H))
+            cx, cy = width / 2.0, height / 2.0
+            denom = 0.78 * height if height else 1.0
+            for y in range(height):
+                dy2 = (y - cy) ** 2
+                for x in range(width):
+                    tv = min(1.0, ((x - cx) ** 2 + dy2) ** 0.5 / denom)
+                    px[x, y] = (
+                        round(r1 + (r2 - r1) * tv),
+                        round(g1 + (g2 - g1) * tv),
+                        round(b1 + (b2 - b1) * tv),
+                    )
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(cache_path)
+    logger.info("[BACKGROUND] Rasterized static %s background -> %s", kind, cache_path.name)
+    return cache_path
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -2720,7 +3480,9 @@ async def upload_file(
 ):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix and suffix not in SUPPORTED_AUDIO_EXTS:
-        return JSONResponse(status_code=400, content={"message": f"Unsupported file type: {suffix}"})
+        return JSONResponse(
+            status_code=400, content={"message": f"Unsupported file type: {suffix}"}
+        )
 
     target = OUTPUT_DIR / f"upload_{uuid.uuid4().hex[:8]}{suffix or '.mp3'}"
 
@@ -2730,7 +3492,9 @@ async def upload_file(
     finally:
         await file.close()
 
-    target, identity = _apply_canonical_media_name(target, raw_name=file.filename or "upload")
+    target, identity = _apply_canonical_media_name(
+        target, raw_name=file.filename or "upload"
+    )
     target = _move_audio_into_project(target, identity["safe_stem"])
 
     job = _start_pipeline_if_idle(
@@ -2744,8 +3508,15 @@ async def upload_file(
         display_title=identity["display"],
     )
     if job:
-        return {"status": "queued", "message": f"Uploaded {target.name} and queued pipeline.", "job": job}
-    return {"status": "busy", "message": f"Uploaded {target.name}. A pipeline job already exists for it."}
+        return {
+            "status": "queued",
+            "message": f"Uploaded {target.name} and queued pipeline.",
+            "job": job,
+        }
+    return {
+        "status": "busy",
+        "message": f"Uploaded {target.name}. A pipeline job already exists for it.",
+    }
 
 
 @app.post("/api/process-url")
@@ -2763,11 +3534,15 @@ def process_url(
 
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
-        return JSONResponse(status_code=400, content={"message": "Only http/https URLs are supported."})
+        return JSONResponse(
+            status_code=400, content={"message": "Only http/https URLs are supported."}
+        )
 
     engine_norm = (engine or "ytdl").strip().lower()
     if engine_norm not in {"ytdl", "metube"}:
-        return JSONResponse(status_code=400, content={"message": f"Unsupported engine: {engine}"})
+        return JSONResponse(
+            status_code=400, content={"message": f"Unsupported engine: {engine}"}
+        )
 
     job = _enqueue_job(
         "url",
@@ -2785,9 +3560,23 @@ def process_url(
         details=f"Stem device: {stem_device}; Whisper device: {whisper_device}; Model: {whisper_model}; Language: {transcription_language}",
     )
     if engine_norm == "metube":
-        return {"status": "queued", "message": "Queued MeTube download and pipeline processing.", "job": job}
-    return {"status": "queued", "message": "Queued URL download and pipeline processing.", "job": job}
+        return {
+            "status": "queued",
+            "message": "Queued MeTube download and pipeline processing.",
+            "job": job,
+        }
+    return {
+        "status": "queued",
+        "message": "Queued URL download and pipeline processing.",
+        "job": job,
+    }
 
+
+# ===============================================================
+# SECTION: API Endpoints - Lyrics & Audio Processing
+# Purpose: POST endpoints for fetching, transcribing, and timing
+#          lyrics automatically using various AI services
+# ===============================================================
 
 @app.post("/api/timing-mode")
 def set_timing_mode(active: str = Form("0")):
@@ -2801,7 +3590,9 @@ def set_timing_mode(active: str = Form("0")):
 @app.post("/api/auto-grab-lyrics")
 def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrclib")):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
         rel_audio = _relative_to_output(audio_path)
         provider_norm = str(provider or "lrclib").strip().lower()
         if provider_norm not in {"auto", "lrclib", "genius", "syncedlyrics"}:
@@ -2832,7 +3623,9 @@ def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrcl
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"message": f"Auto-grab lyrics failed: {exc}"})
+        return JSONResponse(
+            status_code=500, content={"message": f"Auto-grab lyrics failed: {exc}"}
+        )
 
 
 @app.post("/api/auto-transcribe")
@@ -2857,8 +3650,15 @@ def auto_transcribe(
         transcription_language=transcription_language,
     )
     if not job:
-        return {"status": "busy", "message": f"{audio_path.name} is already queued or being processed."}
-    return {"status": "queued", "message": f"Queued auto-transcribe/sync for {audio_path.name}.", "job": job}
+        return {
+            "status": "busy",
+            "message": f"{audio_path.name} is already queued or being processed.",
+        }
+    return {
+        "status": "queued",
+        "message": f"Queued auto-transcribe/sync for {audio_path.name}.",
+        "job": job,
+    }
 
 
 @app.post("/api/auto-correct-word-timing")
@@ -2870,7 +3670,9 @@ def auto_correct_word_timing(
     max_offset_seconds: float = Form(5.0),
 ):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
@@ -2904,7 +3706,11 @@ def auto_correct_word_timing(
         target_key=f"word_timing:{rel_audio}",
         **job_kwargs,
     )
-    return {"status": "queued", "message": f"Queued {mode_label.lower()} AI timing correction for {audio_path.name}.", "job": job}
+    return {
+        "status": "queued",
+        "message": f"Queued {mode_label.lower()} AI timing correction for {audio_path.name}.",
+        "job": job,
+    }
 
 
 @app.post("/api/delete-media")
@@ -2920,8 +3726,12 @@ def delete_media(audio_filename: str = Form(...)):
 
     with JOB_LOCK:
         related_ids = [
-            job_id for job_id, job in JOBS.items()
-            if (job.get("audio_filename") == rel_audio or job.get("project_name") == project_dir.name)
+            job_id
+            for job_id, job in JOBS.items()
+            if (
+                job.get("audio_filename") == rel_audio
+                or job.get("project_name") == project_dir.name
+            )
             and job["status"] in {"queued", "running"}
         ]
     for job_id in related_ids:
@@ -2948,7 +3758,11 @@ def delete_media(audio_filename: str = Form(...)):
         if candidate.exists() and candidate.is_file():
             candidate.unlink(missing_ok=True)
             deleted.append(candidate.name)
-    return {"status": "success", "message": f"Deleted {audio_path.name} and related assets.", "deleted": deleted}
+    return {
+        "status": "success",
+        "message": f"Deleted {audio_path.name} and related assets.",
+        "deleted": deleted,
+    }
 
 
 @app.post("/api/rename-media")
@@ -2964,17 +3778,31 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
 
     proposed_project = _safe_project_name(new_name, fallback=old_project.name)
     if not proposed_project:
-        return JSONResponse(status_code=400, content={"message": "Invalid project name."})
+        return JSONResponse(
+            status_code=400, content={"message": "Invalid project name."}
+        )
 
     target_project = OUTPUT_DIR / proposed_project
     with RENAME_LOCK:
-        reserved_names = set(PENDING_PROJECT_RENAMES.values()) - {PENDING_PROJECT_RENAMES.get(old_project.name)}
-        if proposed_project in reserved_names or (target_project.exists() and target_project.resolve() != old_project.resolve()):
-            return JSONResponse(status_code=409, content={"message": f"Project already exists or is being renamed to: {proposed_project}"})
+        reserved_names = set(PENDING_PROJECT_RENAMES.values()) - {
+            PENDING_PROJECT_RENAMES.get(old_project.name)
+        }
+        if proposed_project in reserved_names or (
+            target_project.exists()
+            and target_project.resolve() != old_project.resolve()
+        ):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "message": f"Project already exists or is being renamed to: {proposed_project}"
+                },
+            )
         PENDING_PROJECT_RENAMES[old_project.name] = proposed_project
         completed = _finalize_pending_project_renames()
 
-    finalized = next((item for item in completed if item["old_project"] == old_project.name), None)
+    finalized = next(
+        (item for item in completed if item["old_project"] == old_project.name), None
+    )
     if finalized:
         target_audio = _resolve_output_file(finalized["audio_filename"])
         lrc_path = _find_project_asset(target_audio.parent, ".lrc", target_audio.stem)
@@ -2997,11 +3825,28 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
     }
 
 
-def _estimate_word_centers(words: list[str], font_size: int) -> list[float]:
-    """Approximate per-word x offsets from line center (no glyph metrics available at render time)."""
-    avg_char_w = font_size * 0.56
-    space_w = font_size * 0.32
-    widths = [max(len(word), 1) * avg_char_w for word in words]
+def _estimate_word_centers(
+    words: list[str],
+    font_size: int,
+    text_width=None,
+    word_padding: float = 0.0,
+) -> list[float]:
+    """Per-word x offsets from line center.
+
+    When a real font-metrics callable is supplied it is used so the ball lands
+    exactly on each word; otherwise fall back to an average-character estimate.
+    """
+    if text_width is not None:
+        measure = text_width
+        space_w = float(measure(" ")) + float(word_padding or 0.0)
+    else:
+        avg_char_w = font_size * 0.56
+
+        def measure(value: str) -> float:
+            return max(len(value), 1) * avg_char_w
+
+        space_w = font_size * 0.32
+    widths = [max(float(measure(word)), 1.0) for word in words]
     total = sum(widths) + space_w * max(0, len(words) - 1)
     centers: list[float] = []
     cursor = -total / 2.0
@@ -3024,7 +3869,8 @@ def _ass_circle_drawing(radius: float) -> str:
 
 def _word_transform_ass(style: str, offset_ms: int, speed_ms: int) -> str:
     """Per-word override tags for word-scope FX. Position-based styles (slide/drop) fall back to a
-    scale/alpha approximation since ASS cannot animate \\pos independently within one \\k text run."""
+    scale/alpha approximation since ASS cannot animate \\pos independently within one \\k text run.
+    """
     end_ms = offset_ms + max(1, speed_ms)
     if style == "fade":
         return rf"\alpha&HFF&\t({offset_ms},{end_ms},\alpha&H00&)"
@@ -3065,74 +3911,181 @@ def _word_transform_ass(style: str, offset_ms: int, speed_ms: int) -> str:
 
 
 def _ass_override_color(style_color: str) -> str:
-    """Style color fields use &HAABBGGRR&; \\1c override tags expect &HBBGGRR& (no alpha byte)."""
-    inner = style_color.strip("&H")
+    """Normalize a color into an ASS \\1c override tag value (&HBBGGRR&).
+
+    Accepts either an ASS style color (&HAABBGGRR&) or a web hex color
+    (#RRGGBB). Web hex must be byte-reversed to BGR, otherwise libass fails to
+    parse the tag and silently falls back to black.
+    """
+    raw = (style_color or "").strip()
+    if not raw:
+        return "&HFFFFFF&"
+    if raw.startswith("#"):
+        hex_digits = raw.lstrip("#")
+        if len(hex_digits) == 3:
+            hex_digits = "".join(ch * 2 for ch in hex_digits)
+        if len(hex_digits) >= 6:
+            r, g, b = hex_digits[0:2], hex_digits[2:4], hex_digits[4:6]
+            return f"&H{b}{g}{r}&".upper()
+        return "&HFFFFFF&"
+    inner = raw.strip("&H")
     if len(inner) >= 8:
         inner = inner[2:]
     return f"&H{inner}&"
 
 
 def _build_bouncing_ball_events(
-    words: list[str],
-    line_start: float,
-    line_end: float,
+    word_timings: list[tuple[str, float, float]],
     center_x: int,
     line_y: int,
     font_size: int,
     color_hex: str,
     fmt_time,
+    ball_radius: int = 0,
+    arc_height: int = 0,
+    bounce_per_sec: float = 0.0,
+    outline_hex: str = "",
+    layout_scale: float = 1.0,
+    text_width=None,
+    word_padding: float = 0.0,
 ) -> list[str]:
-    """One ball hops from word to word in sync with playback, bouncing in place while it waits."""
-    if not words:
+    """One ball follows the same word start/end timings used by karaoke color fills."""
+    if not word_timings:
         return []
-    total_dur = max(0.3, line_end - line_start)
-    per_word = total_dur / len(words)
-    centers = _estimate_word_centers(words, font_size)
+    words = [word for word, _, _ in word_timings]
+    centers = _estimate_word_centers(
+        words, font_size, text_width=text_width, word_padding=word_padding
+    )
     ball_y = line_y - round(font_size * 0.85)
-    bounce_h = max(10, round(font_size * 0.22))
-    radius = max(5, round(font_size * 0.12))
+    # Honor the user's Arc Height / Ball Size from the FX panel, scaled to the
+    # render resolution; fall back to font-derived defaults when unset.
+    scale = layout_scale if layout_scale > 0 else 1.0
+    bounce_h = (
+        max(4, round(arc_height * scale))
+        if arc_height and arc_height > 0
+        else max(10, round(font_size * 0.22))
+    )
+    radius = (
+        max(2, round(ball_radius * scale))
+        if ball_radius and ball_radius > 0
+        else max(5, round(font_size * 0.12))
+    )
     drawing = _ass_circle_drawing(radius)
-    ball_style = rf"{{\p1\1c{_ass_override_color(color_hex)}}}{drawing}{{\p0}}"
+    # The ball is a \p1 vector shape drawn with the Default style, so it would
+    # otherwise inherit that style's thick text outline AND drop shadow -- the
+    # shadow renders as a second offset ball. Force shadow off and only draw a
+    # border when the user actually picked an outline color.
+    if outline_hex:
+        edge_tag = rf"\3c{_ass_override_color(outline_hex)}\bord{max(1, round(radius * 0.18))}"
+    else:
+        edge_tag = r"\bord0"
+    ball_style = (
+        rf"{{\p1\an5\1c{_ass_override_color(color_hex)}{edge_tag}\shad0}}"
+        rf"{drawing}{{\p0}}"
+    )
+    # Bounce Freq is expressed in bounces per second; convert to a cycle length.
+    try:
+        bps = float(bounce_per_sec or 0.0)
+    except (TypeError, ValueError):
+        bps = 0.0
+    cycle_len = min(2.0, max(0.08, 1.0 / bps)) if bps > 0 else 0.35
     events: list[str] = []
-    prev_x = center_x + centers[0]
-    for idx in range(len(words)):
-        word_start = line_start + (idx * per_word)
-        word_end = word_start + per_word
+    # Cap the hop so the ball doesn't drift far ahead of the lyric during long
+    # instrumental gaps; it waits on the current word and jumps just in time.
+    max_hop = 0.55
+    # Duration of the word-to-word flight. Mirrors the 0.32s used by the canvas
+    # preview so the rendered video matches what the user previewed.
+    flight_dur = 0.32
+
+    def _arc_steps(x0, x1, t0, t1, height, steps=None):
+        """Approximate a smooth sinusoidal arc with short linear \\move segments.
+
+        ASS \\move interpolates linearly, so a single up/down pair renders as a
+        sharp triangular tent rather than an arc. Subdividing the flight and
+        sampling y = -sin(p*pi)*height reproduces the same curve the canvas
+        preview draws (see the bouncing-ball block in index.html).
+        """
+        out = []
+        dur = t1 - t0
+        if dur <= 0:
+            return out
+        # Sample densely enough that each segment is at most ~1 video frame, so
+        # libass's linear interpolation is indistinguishable from a true curve.
+        if steps is None:
+            steps = max(6, min(40, int(dur * 30) + 1))
+        prev_t = t0
+        prev_px = x0
+        prev_py = ball_y
+        for i in range(1, steps + 1):
+            p = i / steps
+            cur_t = t0 + dur * p
+            cur_px = x0 + (x1 - x0) * p
+            cur_py = ball_y - math.sin(p * math.pi) * height
+            out.append(
+                f"Dialogue: 2,{fmt_time(prev_t)},{fmt_time(cur_t)},Default,,0,0,0,,"
+                f"{{\\move({prev_px:.0f},{prev_py:.0f},{cur_px:.0f},{cur_py:.0f},0,"
+                f"{max(1, int((cur_t - prev_t) * 1000))})}}{ball_style}"
+            )
+            prev_t, prev_px, prev_py = cur_t, cur_px, cur_py
+        return out
+
+    for idx, (_, word_start, word_end) in enumerate(word_timings):
+        word_end = max(word_start + 0.02, word_end)
         target_x = center_x + centers[idx]
-        flight_ms = max(80, min(320, int(per_word * 1000 * 0.55)))
-        flight_end = min(word_end, word_start + (flight_ms / 1000.0))
-        half = (flight_end - word_start) / 2.0
-        mid_x = (prev_x + target_x) / 2.0
-        apex_y = ball_y - bounce_h
-        if half > 0.01:
-            events.append(
-                f"Dialogue: 2,{fmt_time(word_start)},{fmt_time(word_start + half)},Default,,0,0,0,,"
-                f"{{\\move({prev_x:.0f},{ball_y},{mid_x:.0f},{apex_y},0,{int(half * 1000)})}}{ball_style}"
-            )
-            events.append(
-                f"Dialogue: 2,{fmt_time(word_start + half)},{fmt_time(flight_end)},Default,,0,0,0,,"
-                f"{{\\move({mid_x:.0f},{apex_y},{target_x:.0f},{ball_y},0,{int(half * 1000)})}}{ball_style}"
-            )
-        idle_start = flight_end
-        cycle_len = 0.35
-        cycles_done = 0
-        while idle_start < word_end - 0.02 and cycles_done < 6:
-            up_end = min(word_end, idle_start + (cycle_len / 2))
-            events.append(
-                f"Dialogue: 2,{fmt_time(idle_start)},{fmt_time(up_end)},Default,,0,0,0,,"
-                f"{{\\move({target_x:.0f},{ball_y},{target_x:.0f},{apex_y},0,{int((up_end - idle_start) * 1000)})}}{ball_style}"
-            )
-            down_end = min(word_end, up_end + (cycle_len / 2))
-            if down_end > up_end:
-                events.append(
-                    f"Dialogue: 2,{fmt_time(up_end)},{fmt_time(down_end)},Default,,0,0,0,,"
-                    f"{{\\move({target_x:.0f},{apex_y},{target_x:.0f},{ball_y},0,{int((down_end - up_end) * 1000)})}}{ball_style}"
+        if idx == 0:
+            # First word of the line: the ball simply appears on it. Never park
+            # it off to the side beforehand.
+            prev_x = target_x
+            idle_start = word_start
+        else:
+            prev_x = center_x + centers[idx - 1]
+            prev_end = max(word_timings[idx - 1][1] + 0.02, word_timings[idx - 1][2])
+            # Match the canvas preview: the ball flies across during the START of
+            # the new word rather than requiring a gap beforehand. Lyrics are
+            # usually back-to-back, so a gap-only hop left no room to travel and
+            # the ball appeared to teleport onto each word.
+            hop_start = min(word_start, max(prev_end, word_start - max_hop))
+            hop_end = min(word_end, max(hop_start, word_start) + flight_dur)
+            if hop_end - hop_start > 0.01:
+                events.extend(
+                    _arc_steps(prev_x, target_x, hop_start, hop_end, bounce_h)
                 )
-            idle_start = down_end
+            # Hold the ball on the previous word until the hop begins so it is
+            # never missing from the screen between words.
+            if hop_start > prev_end + 0.01:
+                events.append(
+                    f"Dialogue: 2,{fmt_time(prev_end)},{fmt_time(hop_start)},Default,,0,0,0,,"
+                    f"{{\\pos({prev_x:.0f},{ball_y})}}{ball_style}"
+                )
+            idle_start = hop_end
+        # Once landed, the ball rests on the word, bouncing gently in place.
+        cycles_done = 0
+        idle_h = max(2, round(bounce_h * 0.45))
+        while idle_start < word_end - 0.02 and cycles_done < 6:
+            cycle_end = min(word_end, idle_start + cycle_len)
+            if cycle_end - idle_start > 0.01:
+                events.extend(
+                    _arc_steps(
+                        target_x, target_x, idle_start, cycle_end, idle_h
+                    )
+                )
+            idle_start = cycle_end
             cycles_done += 1
-        prev_x = target_x
+        # If the bounce cycles ran out before the word ended, rest on the word so
+        # the ball never blinks out mid-word.
+        if idle_start < word_end - 0.01:
+            events.append(
+                f"Dialogue: 2,{fmt_time(idle_start)},{fmt_time(word_end)},Default,,0,0,0,,"
+                f"{{\\pos({target_x:.0f},{ball_y})}}{ball_style}"
+            )
     return events
 
+
+# ===============================================================
+# SECTION: LRC to ASS Conversion (Subtitle Generation for FFmpeg)
+# Purpose: Convert LRC format lyrics to ASS subtitle format with
+#          styling, color fills, effects, and word-level timing
+# ===============================================================
 
 def lrc_to_ass(
     lrc_path: Path,
@@ -3152,11 +4105,17 @@ def lrc_to_ass(
     preview_line_count: int,
     render_width: int = 1920,
     render_height: int = 1080,
+    ball_radius: int = 0,
+    arc_height: int = 0,
+    bounce_per_sec: float = 0.0,
+    ball_color: str = "",
+    ball_outline_color: str = "",
 ):
     """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering."""
+
     # Convert Web standard Hex (#RRGGBB) to ASS color format (&HBBGGRR&)
     def to_ass_color(hex_str):
-        hex_str = hex_str.lstrip('#')
+        hex_str = hex_str.lstrip("#")
         r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
         return f"&H00{b}{g}{r}&"
 
@@ -3169,24 +4128,22 @@ def lrc_to_ass(
     font_name = _resolve_render_font_family(requested_font_name)
     spacing = 0
 
-    default_shadow = 0
-    default_outline = 5
-    if text_effect == "shadow":
-        default_shadow = 5
-    elif text_effect == "hard-shadow":
-        default_shadow = 9
-    elif text_effect == "glow":
-        default_shadow = 8
-    elif text_effect == "neon":
-        default_shadow = 12
-        default_outline = 3
-
     render_width = max(320, int(render_width or 1920))
     render_height = max(180, int(render_height or 1080))
     layout_scale = min(render_width / 1920, render_height / 1080)
     font_size = max(12, round(int(font_size) * layout_scale))
     # Keep ASS stroke width in step with the canvas preview's scaled lineWidth.
     default_outline = max(2, round(font_size * 0.16))
+    default_shadow = 0
+    if text_effect == "shadow":
+        default_shadow = max(2, round(font_size * 0.08))
+    elif text_effect == "hard-shadow":
+        default_shadow = max(4, round(font_size * 0.14))
+    elif text_effect == "glow":
+        default_shadow = max(4, round(font_size * 0.12))
+    elif text_effect == "neon":
+        default_shadow = max(6, round(font_size * 0.18))
+        default_outline = max(2, round(font_size * 0.10))
     line_spacing = max(4, round(int(line_spacing) * layout_scale))
     line_height = max(20, round((font_size * 1.1) + line_spacing))
     center_x = round(render_width / 2)
@@ -3201,14 +4158,23 @@ PlayResY: {render_height}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{font_name},{font_size},{p_color},{s_color},{o_color},&H00000000&,-1,0,0,0,100,100,{spacing},0,1,{default_outline},{default_shadow},2,10,10,120,1
-Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&H00000000&,0,-1,0,0,100,100,{spacing},0,1,3,2,2,10,10,{next_margin_v},1
+Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000&,-1,0,0,0,100,100,{spacing},0,1,{default_outline},{default_shadow},5,10,10,{next_margin_v},1
 """
-    ass_header = ass_header.replace(",2,10,10,120,1\n", f",5,10,10,{main_margin_v},1\n", 1)
+    ass_header = ass_header.replace(
+        ",2,10,10,120,1\n", f",5,10,10,{main_margin_v},1\n", 1
+    )
     ass_header = ass_header.replace(",2,10,10,", ",5,10,10,")
 
     # Parse LRC lines. Support [mm:ss], [mm:ss.xx], and [mm:ss.xxx].
-    lines = lrc_path.read_text(encoding="utf-8", errors="ignore").split('\n')
-    events = ["[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+    # Manual chorus markers ([00:12.34]*word) are stripped here: they select which
+    # words are vocalized in the chorus stem and must never appear on screen.
+    lines = [
+        _CHORUS_MARK_RE.sub(r"\1", raw)
+        for raw in lrc_path.read_text(encoding="utf-8", errors="ignore").split("\n")
+    ]
+    events = [
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+    ]
 
     # Parse LRC into timed segments. Supports [mm:ss(.xx)] line tags plus an optional
     # trailing <mm:ss(.xx)> word-end tag that lets a word finish and hold during a pause.
@@ -3216,34 +4182,77 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     end_tag_re = re.compile(r"<(\d+):(\d+)(?:\.(\d{1,3}))?>")
 
     def _tag_seconds(match) -> float:
-        return (int(match.group(1)) * 60) + int(match.group(2)) + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000.0
+        return (
+            (int(match.group(1)) * 60)
+            + int(match.group(2))
+            + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000.0
+        )
 
     segments = []
+    break_before = False
     for line in lines:
         stripped = line.strip()
         if not stripped:
+            break_before = bool(segments)
             continue
         line_tags = list(line_tag_re.finditer(stripped))
         if not line_tags:
             continue
-        end_tags = list(end_tag_re.finditer(stripped))
-        text = end_tag_re.sub("", line_tag_re.sub("", stripped)).strip()
-        if not text:
-            continue
-        end_val = _tag_seconds(end_tags[-1]) if end_tags else None
-        for tag in line_tags:
-            segments.append({"start": _tag_seconds(tag), "end": end_val, "text": text})
+        # Split into [tag -> following text] pieces so inline word-level timestamps
+        # ([t1]word1 [t2]word2) label their own words instead of duplicating the whole line.
+        pieces = []
+        for idx, tag in enumerate(line_tags):
+            seg_end = (
+                line_tags[idx + 1].start()
+                if idx + 1 < len(line_tags)
+                else len(stripped)
+            )
+            raw_seg = stripped[tag.end() : seg_end]
+            seg_ends = list(end_tag_re.finditer(raw_seg))
+            pieces.append(
+                {
+                    "start": _tag_seconds(tag),
+                    "text": end_tag_re.sub("", raw_seg).strip(),
+                    "end": _tag_seconds(seg_ends[-1]) if seg_ends else None,
+                }
+            )
+        non_empty = [p for p in pieces if p["text"]]
+        if len(non_empty) <= 1:
+            # A single line, or a repeated line with leading stacked timestamps.
+            full_text = end_tag_re.sub("", line_tag_re.sub("", stripped)).strip()
+            if not full_text:
+                continue
+            end_tags = list(end_tag_re.finditer(stripped))
+            end_val = _tag_seconds(end_tags[-1]) if end_tags else None
+            for piece in pieces:
+                segments.append(
+                    {
+                        "start": piece["start"],
+                        "end": end_val,
+                        "text": full_text,
+                        "break_before": break_before,
+                    }
+                )
+                break_before = False
+        else:
+            # Inline word-level timing: each timestamp labels the word(s) after it.
+            for i, piece in enumerate(non_empty):
+                segments.append(
+                    {
+                        "start": piece["start"],
+                        "end": piece["end"],
+                        "text": piece["text"],
+                        "break_before": break_before and i == 0,
+                    }
+                )
+            break_before = False
 
     segments.sort(key=lambda item: item["start"])
     if not segments:
-        # Fallback for plain (untimed) lyrics: create sequential synthetic timing.
-        cursor = 0.0
-        for line in lines:
-            plain = line.strip()
-            if not plain:
-                continue
-            segments.append({"start": cursor, "end": None, "text": plain})
-            cursor += 3.5
+        # A plain-text revision intentionally has no playback timing. Do not invent
+        # synthetic timestamps: timing mode must wait for the user's S/F input.
+        ass_path.write_text(ass_header + "\n" + "\n".join(events), encoding="utf-8")
+        return
 
     # Flatten and wrap tokens exactly like buildStableLines() in the preview.
     target_words = 8
@@ -3252,13 +4261,21 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     max_text_width = max(280, render_width - (horizontal_padding * 2))
     word_padding = max(0, round(int(word_padding) * layout_scale))
     font_path = next(
-        (path for path in SERVED_FONTS_DIR.iterdir()
-         if path.is_file() and path.stem.lower() == requested_font_name.lower()),
+        (
+            path
+            for path in SERVED_FONTS_DIR.iterdir()
+            if path.is_file() and path.stem.lower() == requested_font_name.lower()
+        ),
         None,
     )
     try:
         from PIL import ImageFont
-        metric_font = ImageFont.truetype(str(font_path), font_size) if font_path else ImageFont.truetype(font_name, font_size)
+
+        metric_font = (
+            ImageFont.truetype(str(font_path), font_size)
+            if font_path
+            else ImageFont.truetype(font_name, font_size)
+        )
     except Exception:
         metric_font = None
 
@@ -3275,18 +4292,34 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
         words = segment["text"].split()
         if not words:
             continue
-        next_start = segments[index + 1]["start"] if index + 1 < len(segments) else segment["start"] + 3.0
-        segment_end = segment["end"] if segment["end"] and segment["end"] > segment["start"] else next_start
+        next_start = (
+            segments[index + 1]["start"]
+            if index + 1 < len(segments)
+            else segment["start"] + 3.0
+        )
+        segment_end = (
+            segment["end"]
+            if segment["end"] and segment["end"] > segment["start"]
+            else next_start
+        )
         per_word = max(0.02, (segment_end - segment["start"]) / len(words))
         for word_index, word in enumerate(words):
             start = segment["start"] + (word_index * per_word)
-            end = segment["end"] if len(words) == 1 and segment["end"] else start + per_word
-            tokens.append({
-                "word": word,
-                "start": start,
-                "end": end,
-                "is_lrc_start": word_index == 0,
-            })
+            end = (
+                segment["end"]
+                if len(words) == 1 and segment["end"]
+                else start + per_word
+            )
+            tokens.append(
+                {
+                    "word": word,
+                    "start": start,
+                    "end": end,
+                    "is_lrc_start": word_index == 0,
+                    "break_before": bool(segment.get("break_before"))
+                    and word_index == 0,
+                }
+            )
 
     display_lines = []
     current = []
@@ -3295,23 +4328,48 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     for index, token in enumerate(tokens):
         word_width = _text_width(token["word"])
         previous = tokens[index - 1] if index else None
-        pause_break = previous and previous["end"] is not None and token["start"] - previous["end"] > max_gap
-        line_break = (
-            current
-            and (current_width + space_width + word_width + word_padding > max_text_width
-                 or len(current) >= target_words
-                 or pause_break)
+        pause_break = (
+            previous
+            and previous["end"] is not None
+            and token["start"] - previous["end"] > max_gap
+        )
+        line_break = current and (
+            current_width + space_width + word_width + word_padding > max_text_width
+            or len(current) >= target_words
+            or pause_break
+            or token.get("break_before")
         )
         if line_break:
-            display_lines.append({"kind": "words", "start": current[0]["start"], "text": " ".join(item["word"] for item in current), "words": current})
+            display_lines.append(
+                {
+                    "kind": "words",
+                    "start": current[0]["start"],
+                    "text": " ".join(item["word"] for item in current),
+                    "words": current,
+                }
+            )
             current = []
             current_width = 0.0
         current.append(token)
-        current_width += word_width if len(current) == 1 else space_width + word_width + word_padding
+        current_width += (
+            word_width if len(current) == 1 else space_width + word_width + word_padding
+        )
     if current:
-        display_lines.append({"kind": "words", "start": current[0]["start"], "text": " ".join(item["word"] for item in current), "words": current})
+        display_lines.append(
+            {
+                "kind": "words",
+                "start": current[0]["start"],
+                "text": " ".join(item["word"] for item in current),
+                "words": current,
+            }
+        )
 
-    logger.info("[ASS] segments=%s -> display lines=%s from %s", len(segments), len(display_lines), lrc_path.name)
+    logger.info(
+        "[ASS] segments=%s -> display lines=%s from %s",
+        len(segments),
+        len(display_lines),
+        lrc_path.name,
+    )
 
     def _format_ass_time(t: float) -> str:
         h = int(t // 3600)
@@ -3326,7 +4384,10 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
             n = max(1, len(words))
             span = max(0.20, line_end - entry["start"])
             per = span / n
-            return [(w, entry["start"] + k * per, entry["start"] + (k + 1) * per) for k, w in enumerate(words)]
+            return [
+                (w, entry["start"] + k * per, entry["start"] + (k + 1) * per)
+                for k, w in enumerate(words)
+            ]
         raw = entry["words"]
         n = len(raw)
         timed = []
@@ -3343,19 +4404,34 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
 
     word_padding = max(0, round(int(word_padding) * layout_scale))
 
-    def _karaoke_for_display(entry, line_end, word_fx_style: str = "", fx_speed_ms: int = 400) -> str:
+    def _karaoke_for_display(
+        entry,
+        line_end,
+        lead_in: float = 0.0,
+        word_fx_style: str = "",
+        fx_speed_ms: int = 400,
+    ) -> str:
         # \kf sweeps a word secondary->primary over its sung duration; a following \k on the
         # inter-word space consumes the pause so the word stays fully filled (held) until the next word.
         timed = _resolve_word_timings(entry, line_end)
         if not timed:
             return entry.get("text", "")
+        # Reserve the reading lead-in before the first visible word so karaoke filling still
+        # begins at the original lyric timestamp rather than when the line enters the screen.
+        lead_tag = (
+            r"{\k" + str(max(0, int(round(lead_in * 100)))) + "}" if lead_in > 0 else ""
+        )
         line_start = timed[0][1]
         if len(timed) == 1:
             word, start, end = timed[0]
             fill_cs = max(1, int(round(max(0.02, end - start) * 100)))
-            fx_tag = _word_transform_ass(word_fx_style, 0, fx_speed_ms) if word_fx_style else ""
-            return r"{\kf" + str(fill_cs) + fx_tag + "}" + word
-        parts = []
+            fx_tag = (
+                _word_transform_ass(word_fx_style, 0, fx_speed_ms)
+                if word_fx_style
+                else ""
+            )
+            return lead_tag + r"{\kf" + str(fill_cs) + fx_tag + "}" + word
+        parts = [lead_tag] if lead_tag else []
         prev_end = line_start
         for idx, (word, start, end) in enumerate(timed):
             if idx > 0:
@@ -3364,7 +4440,13 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
                 reset_tag = r"{\fsp0}" if word_padding else ""
                 parts.append(r"{\k" + str(gap_cs) + "}" + padding_tag + " " + reset_tag)
             fill_cs = max(1, int(round(max(0.02, end - start) * 100)))
-            fx_tag = _word_transform_ass(word_fx_style, int(round((start - line_start) * 1000)), fx_speed_ms) if word_fx_style else ""
+            fx_tag = (
+                _word_transform_ass(
+                    word_fx_style, int(round((start - line_start) * 1000)), fx_speed_ms
+                )
+                if word_fx_style
+                else ""
+            )
             parts.append(r"{\kf" + str(fill_cs) + fx_tag + "}" + word)
             prev_end = end
         return "".join(parts)
@@ -3372,103 +4454,142 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
     # Generate ASS event blocks with transition/mode controls mapped from preview settings.
     speed_ms = max(80, min(1800, int(float(fx_speed or 0.6) * 1000)))
     visible_lines = max(1, min(4, int(preview_line_count or 3)))
-    show_upcoming = reveal_mode in {"block", "eager"}
-    upcoming_count = (visible_lines - 1) if show_upcoming else 0
+    upcoming_count = visible_lines - 1
     line_height = max(30, int((font_size * 1.1) + max(0, line_spacing)))
-    page_size = visible_lines if reveal_mode == "block" else 1
+    reading_lead_in = 1.5
+    n = len(display_lines)
 
-    for i in range(len(display_lines)):
-        entry = display_lines[i]
-        start_time = entry["start"]
-        # End event when the next line kicks in, or default to 5 seconds later
-        end_time = display_lines[i + 1]["start"] if i + 1 < len(display_lines) else start_time + 5.0
-
-        start_str = _format_ass_time(start_time)
-        end_str = _format_ass_time(end_time)
-        text = entry["text"]
-        is_page_start = (i % page_size == 0)
-        if fx_scope == "word" and transition_style not in {"none", ""}:
-            text_payload = _karaoke_for_display(entry, end_time, word_fx_style=transition_style, fx_speed_ms=speed_ms)
-        else:
-            text_payload = _karaoke_for_display(entry, end_time)
-
-
-        # Inject selected render effect directives (skipped for bouncing-ball, which uses a drawn
-        # ball overlay below, and for word scope, which already wrapped each \k word above).
-        effect_mod = ""
-        if fx_scope != "word" and transition_style != "bouncing-ball":
-            if transition_style == "fade":
-                effect_mod = rf"{{\fad({speed_ms},{speed_ms})}}"
-            elif transition_style == "pop":
-                effect_mod = rf"{{\fscX112\fscY112\t(0,{speed_ms},\fscX100\fscY100)}}"
-            elif transition_style == "slide":
-                effect_mod = rf"{{\move({center_x},{round(render_height * 0.889)},{center_x},{center_y},0,{speed_ms})}}"
-            elif transition_style == "zoom":
-                effect_mod = rf"{{\fscX84\fscY84\t(0,{speed_ms},\fscX100\fscY100)}}"
-            elif transition_style == "drop":
-                effect_mod = rf"{{\move({center_x},{round(render_height * 0.278)},{center_x},{center_y},0,{speed_ms})}}"
-            elif transition_style == "blur":
-                effect_mod = rf"{{\blur6\t(0,{speed_ms},\blur0)}}"
-            elif transition_style == "rotate-360":
-                effect_mod = rf"{{\frz360\t(0,{speed_ms},\frz0)}}"
-            elif transition_style == "glimmer":
-                effect_mod = rf"{{\alpha&H55&\t(0,{speed_ms // 2},\alpha&H00&)\t({speed_ms // 2},{speed_ms},\alpha&H55&)}}"
-            elif transition_style == "shake":
-                effect_mod = rf"{{\t(0,{speed_ms // 3},\frx3\fry-3)\t({speed_ms // 3},{speed_ms * 2 // 3},\frx-3\fry3)\t({speed_ms * 2 // 3},{speed_ms},\frx0\fry0)}}"
-            elif transition_style == "flip":
-                effect_mod = rf"{{\fscx20\t(0,{speed_ms},\fscx100)}}"
-            elif transition_style == "pulse":
-                half_speed = max(1, speed_ms // 2)
-                effect_mod = rf"{{\fscx82\fscy82\alpha&H55&\t(0,{half_speed},\fscx110\fscy110\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)}}"
-            elif transition_style == "sway":
-                half_speed = max(1, speed_ms // 2)
-                effect_mod = rf"{{\frz-12\t(0,{half_speed},\frz10)\t({half_speed},{speed_ms},\frz0)}}"
-            elif transition_style == "skew":
-                half_speed = max(1, speed_ms // 2)
-                effect_mod = rf"{{\fax-0.45\t(0,{half_speed},\fax0.35)\t({half_speed},{speed_ms},\fax0)}}"
-            elif transition_style == "stamp":
-                effect_mod = rf"{{\fscx138\fscy138\bord12\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\bord5\alpha&H00&)}}"
-            elif transition_style == "focus":
-                effect_mod = rf"{{\blur9\alpha&HFF&\t(0,{speed_ms},\blur0\alpha&H00&)}}"
-
-        if reveal_mode == "continuous" and transition_style in {"slide", "drop"}:
-            # Continuous mode already uses \move for vertical scrolling.
-            effect_mod = ""
-
-        total_visible_now = 1 + min(upcoming_count, max(0, len(display_lines) - (i + 1)))
-        top_y = center_y - int(((total_visible_now - 1) * line_height) / 2)
-        current_y = top_y
-        pos_tag = rf"\an5\pos({center_x},{current_y})"
-        if reveal_mode == "continuous":
-            scroll_span = max(line_height * 2, int(line_height * (visible_lines + 0.5)))
-            scroll_start_y = center_y + (scroll_span // 2)
-            scroll_end_y = center_y - (scroll_span // 2)
-            scroll_ms = max(1, int((end_time - start_time) * 1000))
-            pos_tag = rf"\an5\move({center_x},{scroll_start_y},{center_x},{scroll_end_y},0,{scroll_ms})"
-
-
-        events.append(
-            f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{{{pos_tag}}}{effect_mod}{text_payload}"
+    def _line_end_for(gidx: int) -> float:
+        return (
+            display_lines[gidx + 1]["start"]
+            if gidx + 1 < n
+            else display_lines[gidx]["start"] + 5.0
         )
 
+    def _line_last_word_end(gidx: int) -> float:
+        words = display_lines[gidx].get("words") or []
+        if words and words[-1].get("end") is not None:
+            return float(words[-1]["end"])
+        return _line_end_for(gidx)
+
+    def _appear_time(gidx: int) -> float:
+        # A line pre-rolls in during any real pause before it (up to reading_lead_in) so the
+        # singer can read ahead, but never overlaps the previous line's sung words.
+        start = display_lines[gidx]["start"]
+        if gidx <= 0:
+            return max(0.0, start - min(reading_lead_in, start))
+        gap = start - _line_last_word_end(gidx - 1)
+        return max(0.0, start - min(reading_lead_in, max(0.0, gap)))
+
+    def _payload_for(entry: dict, line_end: float, lead: float) -> str:
+        if fx_scope == "word" and transition_style not in {"none", ""}:
+            return _karaoke_for_display(
+                entry,
+                line_end,
+                lead,
+                word_fx_style=transition_style,
+                fx_speed_ms=speed_ms,
+            )
+        return _karaoke_for_display(entry, line_end, lead)
+
+    def _effect_mod() -> str:
+        # Quick entrance flourish only; text stays fully visible (in secondary) for reading.
+        if fx_scope == "word" or transition_style == "bouncing-ball":
+            return ""
+        half_speed = max(1, speed_ms // 2)
+        table = {
+            "fade": rf"{{\fad({speed_ms},{speed_ms})}}",
+            "pop": rf"{{\fscX112\fscY112\t(0,{speed_ms},\fscX100\fscY100)}}",
+            "slide": rf"{{\move({center_x},{round(render_height * 0.889)},{center_x},{center_y},0,{speed_ms})}}",
+            "zoom": rf"{{\fscX84\fscY84\t(0,{speed_ms},\fscX100\fscY100)}}",
+            "drop": rf"{{\move({center_x},{round(render_height * 0.278)},{center_x},{center_y},0,{speed_ms})}}",
+            "blur": rf"{{\blur6\t(0,{speed_ms},\blur0)}}",
+            "rotate-360": rf"{{\frz360\t(0,{speed_ms},\frz0)}}",
+            "glimmer": rf"{{\alpha&H55&\t(0,{half_speed},\alpha&H00&)\t({half_speed},{speed_ms},\alpha&H55&)}}",
+            "shake": rf"{{\t(0,{speed_ms // 3},\frx3\fry-3)\t({speed_ms // 3},{speed_ms * 2 // 3},\frx-3\fry3)\t({speed_ms * 2 // 3},{speed_ms},\frx0\fry0)}}",
+            "flip": rf"{{\fscx20\t(0,{speed_ms},\fscx100)}}",
+            "pulse": rf"{{\fscx82\fscy82\alpha&H55&\t(0,{half_speed},\fscx110\fscy110\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)}}",
+            "sway": rf"{{\frz-12\t(0,{half_speed},\frz10)\t({half_speed},{speed_ms},\frz0)}}",
+            "skew": rf"{{\fax-0.45\t(0,{half_speed},\fax0.35)\t({half_speed},{speed_ms},\fax0)}}",
+            "stamp": rf"{{\fscx138\fscy138\bord12\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\bord5\alpha&H00&)}}",
+            "focus": rf"{{\blur9\alpha&HFF&\t(0,{speed_ms},\blur0\alpha&H00&)}}",
+        }
+        mod = table.get(transition_style, "")
+        if reveal_mode == "continuous" and transition_style in {"slide", "drop"}:
+            # \move drives scrolling, so use a compatible scale/fade entrance instead.
+            mod = rf"{{\fscX84\fscY84\alpha&H88&\t(0,{speed_ms},\fscX100\fscY100\alpha&H00&)}}"
+        return mod
+
+    def _emit_line(entry, gidx, row_y, dialogue_start, start_str, end_str, effect_mod):
+        line_end = _line_end_for(gidx)
+        lead = max(0.0, entry["start"] - dialogue_start)
+        payload = _payload_for(entry, line_end, lead)
+        pos_tag = rf"\an5\pos({center_x},{row_y})"
+        events.append(
+            f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{{{pos_tag}}}{effect_mod}{payload}"
+        )
         if transition_style == "bouncing-ball" and fx_scope != "word":
             events.extend(
                 _build_bouncing_ball_events(
-                    [w for w in (text or "").split() if w],
-                    start_time,
-                    end_time,
+                    _resolve_word_timings(entry, line_end),
                     center_x,
-                    current_y,
+                    row_y,
                     font_size,
-                    p_color,
+                    ball_color or p_color,
                     _format_ass_time,
+                    ball_radius=ball_radius,
+                    arc_height=arc_height,
+                    bounce_per_sec=bounce_per_sec,
+                    outline_hex=ball_outline_color,
+                    layout_scale=layout_scale,
+                    text_width=_text_width,
+                    word_padding=word_padding,
                 )
             )
 
-        # Display upcoming lines based on reveal mode (block/eager only).
-        if show_upcoming and transition_style != "scroll":
+    if reveal_mode == "block":
+        # Paginate into fixed groups. Every line in a page is shown together (readable in the
+        # secondary color) and each sweeps to primary at its own word time; the whole page holds
+        # until the next page pre-rolls in.
+        for page_start in range(0, n, visible_lines):
+            page = list(range(page_start, min(page_start + visible_lines, n)))
+            dialogue_start = _appear_time(page[0])
+            next_page = page_start + visible_lines
+            if next_page < n:
+                dialogue_end = max(dialogue_start + 0.05, _appear_time(next_page))
+            else:
+                dialogue_end = _line_end_for(page[-1])
+            start_str = _format_ass_time(dialogue_start)
+            end_str = _format_ass_time(dialogue_end)
+            top_y = center_y - int(((len(page) - 1) * line_height) / 2)
+            effect_mod = _effect_mod()
+            for row, gidx in enumerate(page):
+                _emit_line(
+                    display_lines[gidx],
+                    gidx,
+                    top_y + row * line_height,
+                    dialogue_start,
+                    start_str,
+                    end_str,
+                    effect_mod,
+                )
+    else:
+        # Eager / continuous: the active line sweeps while upcoming lines are shown as an
+        # unfilled (secondary) preview so the singer can read ahead without early highlighting.
+        for i in range(n):
+            entry = display_lines[i]
+            dialogue_start = _appear_time(i)
+            next_start = _appear_time(i + 1) if i + 1 < n else entry["start"] + 5.0
+            dialogue_end = max(dialogue_start + 0.05, next_start)
+            start_str = _format_ass_time(dialogue_start)
+            end_str = _format_ass_time(dialogue_end)
+            total_visible_now = 1 + min(upcoming_count, max(0, n - (i + 1)))
+            top_y = center_y - int(((total_visible_now - 1) * line_height) / 2)
+            _emit_line(
+                entry, i, top_y, dialogue_start, start_str, end_str, _effect_mod()
+            )
             for offset in range(1, upcoming_count + 1):
-                if i + offset >= len(display_lines):
+                if i + offset >= n:
                     break
                 next_text = display_lines[i + offset]["text"]
                 next_y = top_y + (offset * line_height)
@@ -3477,6 +4598,13 @@ Style: Upcoming,{font_name},{int(font_size*0.7)},{s_color},{s_color},{o_color},&
                 )
 
     ass_path.write_text(ass_header + "\n" + "\n".join(events), encoding="utf-8")
+
+
+# ===============================================================
+# SECTION: FFmpeg Video Burning (Canvas Rendering to MP4/WebM)
+# Purpose: Execute FFmpeg command to render ASS subtitles and
+#          audio onto canvas/video, generating final karaoke video
+# ===============================================================
 
 def execute_ffmpeg_burn(
     audio_filename: str,
@@ -3505,6 +4633,11 @@ def execute_ffmpeg_burn(
     render_token: str = "",
     render_width: int = 1280,
     render_height: int = 720,
+    ball_radius: int = 26,
+    arc_height: int = 78,
+    bounce_per_sec: float = 0.1,
+    ball_color: str = "",
+    ball_outline_color: str = "",
 ):
     """Render a karaoke video at the requested resolution using NVENC when available."""
     audio_path = _resolve_output_file(audio_filename)
@@ -3513,8 +4646,13 @@ def execute_ffmpeg_burn(
     base_name = audio_path.stem
     lrc_path = _find_project_asset(project_dir, ".lrc", base_name)
     if not lrc_path:
-        raise FileNotFoundError(f"No .lrc lyrics file found in project: {project_dir.name}")
-    ass_path = _find_project_asset(project_dir, ".ass", base_name) or project_dir / f"{base_name}.ass"
+        raise FileNotFoundError(
+            f"No .lrc lyrics file found in project: {project_dir.name}"
+        )
+    ass_path = (
+        _find_project_asset(project_dir, ".ass", base_name)
+        or project_dir / f"{base_name}.ass"
+    )
     project_label = _safe_output_name(project_dir.name, fallback_stem=base_name)
     stamp = str(render_token or datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f"))
     normalized_source = str(render_source or "").strip().lower()
@@ -3546,14 +4684,39 @@ def execute_ffmpeg_burn(
     stem_dir = _find_project_stems(project_dir, base_name)
     demucs_no_vocals = stem_dir / "no_vocals.wav" if stem_dir else None
     render_audio_path = audio_path
-    if normalized_source == "chorus" and chorus_track.exists() and chorus_track.is_file():
+    if normalized_source == "chorus":
+        # Rebuild the chorus stem now so it always reflects the user's current
+        # +chorus / -chorus word selections rather than a stale cached mix.
+        no_vocals_source = None
+        if minus_track.exists() and minus_track.is_file():
+            no_vocals_source = minus_track
+        elif demucs_no_vocals and demucs_no_vocals.exists():
+            no_vocals_source = demucs_no_vocals
+        if no_vocals_source and _parse_manual_chorus_ranges(lrc_path):
+            try:
+                _build_chorus_aware_track(
+                    job_id or "", audio_path, no_vocals_source, lrc_path, chorus_track
+                )
+            except Exception as exc:
+                logger.warning("[CHORUS STEM] rebuild failed, using existing: %s", exc)
+    if (
+        normalized_source == "chorus"
+        and chorus_track.exists()
+        and chorus_track.is_file()
+    ):
         render_audio_path = chorus_track
     elif normalized_source != "preview":
         if minus_track.exists() and minus_track.is_file():
             render_audio_path = minus_track
-        elif demucs_no_vocals and demucs_no_vocals.exists() and demucs_no_vocals.is_file():
+        elif (
+            demucs_no_vocals
+            and demucs_no_vocals.exists()
+            and demucs_no_vocals.is_file()
+        ):
             render_audio_path = demucs_no_vocals
-    logger.info("[RENDER AUDIO] using %s for %s", render_audio_path.name, audio_path.name)
+    logger.info(
+        "[RENDER AUDIO] using %s for %s", render_audio_path.name, audio_path.name
+    )
 
     # 1. Compile custom styled Subtitle asset mapping
     lrc_to_ass(
@@ -3574,6 +4737,11 @@ def execute_ffmpeg_burn(
         preview_line_count,
         render_width=render_width,
         render_height=render_height,
+        ball_radius=ball_radius,
+        arc_height=arc_height,
+        bounce_per_sec=bounce_per_sec,
+        ball_color=ball_color,
+        ball_outline_color=ball_outline_color,
     )
 
     # 2. Build FFmpeg command stack targeting GTX 1070 NVENC cores
@@ -3582,41 +4750,41 @@ def execute_ffmpeg_burn(
     render_width = max(320, int(render_width or 1280))
     render_height = max(180, int(render_height or 720))
     if bg_kind in {"color", "gradient", "spiral"}:
-        video_source = ["-f", "lavfi", "-i", f"color=c={bg_color.lstrip('#')}:s={render_width}x{render_height}:r=30"]
+        video_source = [
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={bg_color.lstrip('#')}:s={render_width}x{render_height}:r=30",
+        ]
     else:
         bg_img = project_dir / "custom_bg.jpg"
         if not bg_img.exists():
             bg_img = OUTPUT_DIR / "custom_bg.jpg"
-        video_source = ["-loop", "1", "-i", str(bg_img)]
+        video_source = ["-loop", "1", "-framerate", "30", "-i", str(bg_img)]
 
     vf_filters = []
     if bg_kind not in {"color", "gradient", "spiral"}:
         vf_filters.append(
             f"scale={render_width}:{render_height}:force_original_aspect_ratio=decrease"
         )
-        vf_filters.append(
-            f"pad={render_width}:{render_height}:(ow-iw)/2:(oh-ih)/2"
+        vf_filters.append(f"pad={render_width}:{render_height}:(ow-iw)/2:(oh-ih)/2")
+    if bg_kind in {"gradient", "spiral"}:
+        # Gradient/spiral backgrounds are completely static, so rasterize them
+        # ONCE to a PNG instead of using ffmpeg's `geq` filter. `geq` evaluates a
+        # per-pixel expression on a single CPU thread for every frame, which
+        # starves the NVENC encoder and makes GPU renders run at CPU speed.
+        if bg_kind == "gradient":
+            ramp = _hex_to_rgb(bg_color), _hex_to_rgb(outline_color)
+        else:
+            ramp = _hex_to_rgb(bg_color), _hex_to_rgb(primary_color)
+        static_bg = _render_static_background(
+            bg_kind, ramp[0], ramp[1], render_width, render_height, project_dir
         )
-    if bg_kind == "gradient":
-        r1, g1, b1 = _hex_to_rgb(bg_color)
-        r2, g2, b2 = _hex_to_rgb(outline_color)
-        vf_filters.append(
-            "geq="
-            f"r='{r1}+({r2}-{r1})*Y/H':"
-            f"g='{g1}+({g2}-{g1})*Y/H':"
-            f"b='{b1}+({b2}-{b1})*Y/H'"
-        )
-    elif bg_kind == "spiral":
-        r1, g1, b1 = _hex_to_rgb(bg_color)
-        r2, g2, b2 = _hex_to_rgb(primary_color)
-        vf_filters.append(
-            "geq="
-            f"r='({r1})+(({r2}-{r1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))':"
-            f"g='({g1})+(({g2}-{g1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))':"
-            f"b='({b1})+(({b2}-{b1})*min(1,sqrt((X-W/2)^2+(Y-H/2)^2)/(0.78*H)))'"
-        )
+        video_source = ["-loop", "1", "-framerate", "30", "-i", str(static_bg)]
 
-    vf_filters.append(f"ass='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(SERVED_FONTS_DIR)}'")
+    vf_filters.append(
+        f"ass='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(SERVED_FONTS_DIR)}'"
+    )
 
     cmd = [
         FFMPEG_BIN,
@@ -3636,13 +4804,19 @@ def execute_ffmpeg_burn(
         cmd.extend(["-filter:a", audio_filter])
     encoder_args = _render_video_encoder_args(render_device)
     actual_device = "cuda" if "h264_nvenc" in encoder_args else "cpu"
-    cmd.extend([
-        *encoder_args,
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        str(output_video_path),
-    ])
+    cmd.extend(
+        [
+            *encoder_args,
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            str(output_video_path),
+        ]
+    )
 
     if job_id:
         _run_cancellable_command(
@@ -3656,6 +4830,13 @@ def execute_ffmpeg_burn(
     else:
         subprocess.run(cmd, check=True)
     return actual_device
+
+
+# ===============================================================
+# SECTION: API Endpoints - Video & Audio Rendering
+# Purpose: POST endpoints for burning lyrics/effects to video,
+#          handling Final/Chorus/Preview render requests
+# ===============================================================
 
 @app.post("/api/burn-video")
 def burn_video(
@@ -3673,7 +4854,7 @@ def burn_video(
     fx_scope: str = Form("page"),
     fx_speed: float = Form(0.6),
     text_effect: str = Form("none"),
-    reveal_mode: str = Form("block"),
+    reveal_mode: str = Form("continuous"),
     preview_line_count: int = Form(3),
     pitch: float = Form(1.0),
     volume: float = Form(1.0),
@@ -3682,16 +4863,28 @@ def burn_video(
     render_source: str = Form(""),
     render_width: int = Form(1280),
     render_height: int = Form(720),
+    ball_radius: int = Form(26),
+    arc_height: int = Form(78),
+    arc_fraction: float = Form(0.35),
+    bounce_per_sec: float = Form(0.1),
+    ball_color: str = Form("#ffffff"),
+    ball_outline_color: str = Form("#000000"),
 ):
     rel_audio = audio_filename
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
         project_name = audio_path.parent.name
         rel_audio = _relative_to_output(audio_path)
     except Exception:
-        project_name = (Path(audio_filename).parts[0] if "/" in str(audio_filename) else "")
+        project_name = (
+            Path(audio_filename).parts[0] if "/" in str(audio_filename) else ""
+        )
 
-    safe_project = _safe_output_name(project_name, fallback_stem=Path(rel_audio).stem or "project")
+    safe_project = _safe_output_name(
+        project_name, fallback_stem=Path(rel_audio).stem or "project"
+    )
     render_width = max(320, int(render_width or 1280))
     render_height = max(180, int(render_height or 720))
     render_resolution = f"{render_width}x{render_height}"
@@ -3701,7 +4894,9 @@ def burn_video(
         normalized_source = "preview" if use_preview_audio else "final"
     mode_suffix_map = {"preview": "_preview", "chorus": "_chorus", "final": ""}
     mode_suffix = mode_suffix_map[normalized_source]
-    output_filename = f"{safe_project}{mode_suffix}_{render_token}_{render_resolution}.mp4"
+    output_filename = (
+        f"{safe_project}{mode_suffix}_{render_token}_{render_resolution}.mp4"
+    )
 
     job = _enqueue_job(
         "render",
@@ -3737,6 +4932,12 @@ def burn_video(
         render_width=render_width,
         render_height=render_height,
         render_resolution=render_resolution,
+        ball_radius=ball_radius,
+        arc_height=arc_height,
+        arc_fraction=arc_fraction,
+        bounce_per_sec=bounce_per_sec,
+        ball_color=ball_color,
+        ball_outline_color=ball_outline_color,
         details=(
             f"Resolution: {render_resolution}; Source: {rel_audio}; Output: {output_filename}; "
             f"Render device: {render_device}; Pitch: {pitch}; Volume: {volume}; "
@@ -3748,14 +4949,31 @@ def burn_video(
     return {"status": "queued", "message": "Queued FFmpeg render job.", "job": job}
 
 
+
+
+# ===============================================================
+# SECTION: API Endpoints - Job Management & Utilities
+# Purpose: List/cancel jobs, manage fonts/themes, export projects,
+#          save/load project state, and health checks
+# ===============================================================
+
 @app.get("/api/jobs")
 def list_jobs(project_name: str = ""):
     with JOB_LOCK:
-        jobs = [_job_view(job) for job in sorted(JOBS.values(), key=lambda item: item["created_at"], reverse=True)]
+        jobs = [
+            _job_view(job)
+            for job in sorted(
+                JOBS.values(), key=lambda item: item["created_at"], reverse=True
+            )
+        ]
     if project_name:
         # Keep project-less ingest/download jobs visible in every view: a fresh URL
         # download has no resolved project name until it finishes downloading.
-        jobs = [job for job in jobs if job.get("project_name") == project_name or not job.get("project_name")]
+        jobs = [
+            job
+            for job in jobs
+            if job.get("project_name") == project_name or not job.get("project_name")
+        ]
     return {"jobs": jobs}
 
 
@@ -3763,8 +4981,15 @@ def list_jobs(project_name: str = ""):
 def cancel_job(job_id: str):
     job = _cancel_job(job_id)
     if not job:
-        return JSONResponse(status_code=404, content={"message": f"Job not found: {job_id}"})
-    return {"status": "success", "message": f"Cancellation requested for {job['label']}", "job": job}
+        return JSONResponse(
+            status_code=404, content={"message": f"Job not found: {job_id}"}
+        )
+    return {
+        "status": "success",
+        "message": f"Cancellation requested for {job['label']}",
+        "job": job,
+    }
+
 
 @app.get("/api/get-fonts")
 def get_fonts():
@@ -3790,6 +5015,7 @@ def debug_report():
         },
     }
 
+
 @app.post("/api/save-lyrics")
 def save_lyrics(filename: str = Form(...), content: str = Form(...)):
     target_path = _resolve_output_path(filename, require_exists=False)
@@ -3798,14 +5024,21 @@ def save_lyrics(filename: str = Form(...), content: str = Form(...)):
         target_path.write_text(content, encoding="utf-8")
         return {"status": "success", "message": "Lyrics data updated successfully."}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"message": f"Write access failure: {exc}"})
+        return JSONResponse(
+            status_code=500, content={"message": f"Write access failure: {exc}"}
+        )
+
 
 @app.get("/api/load-lyrics")
 def load_lyrics(filename: str):
     p = _resolve_output_path(filename, require_exists=False)
     content = p.read_text(encoding="utf-8") if p.exists() else ""
     # Try to extract provider info from metadata file next to LRC
-    metadata_file = p.with_suffix(".lrc.meta") if p.suffix == ".lrc" else p.parent / f"{p.stem}.lrc.meta"
+    metadata_file = (
+        p.with_suffix(".lrc.meta")
+        if p.suffix == ".lrc"
+        else p.parent / f"{p.stem}.lrc.meta"
+    )
     provider = None
     if metadata_file.exists():
         try:
@@ -3814,6 +5047,7 @@ def load_lyrics(filename: str):
         except Exception:
             pass
     return {"content": content, "provider": provider}
+
 
 @app.get("/api/list-files")
 def list_files(sources_only: bool = False):
@@ -3826,24 +5060,35 @@ def list_files(sources_only: bool = False):
 @app.get("/api/export-project")
 def export_project(audio_filename: str):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     project_dir = audio_path.parent
     archive_name = f"{project_dir.name}.zip"
-    archive_file = tempfile.NamedTemporaryFile(prefix="onepage-karaoke-", suffix=".zip", delete=False)
+    archive_file = tempfile.NamedTemporaryFile(
+        prefix="onepage-karaoke-", suffix=".zip", delete=False
+    )
     archive_path = Path(archive_file.name)
     archive_file.close()
 
     try:
-        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        with zipfile.ZipFile(
+            archive_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True
+        ) as archive:
             for source_path in sorted(project_dir.rglob("*")):
                 if source_path.is_file() and not source_path.is_symlink():
-                    archive.write(source_path, Path(project_dir.name) / source_path.relative_to(project_dir))
+                    archive.write(
+                        source_path,
+                        Path(project_dir.name) / source_path.relative_to(project_dir),
+                    )
     except Exception as exc:
         archive_path.unlink(missing_ok=True)
-        return JSONResponse(status_code=500, content={"message": f"Failed to export project: {exc}"})
+        return JSONResponse(
+            status_code=500, content={"message": f"Failed to export project: {exc}"}
+        )
 
     def stream_archive():
         try:
@@ -3853,26 +5098,42 @@ def export_project(audio_filename: str):
         finally:
             archive_path.unlink(missing_ok=True)
 
-    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(archive_name)}"}
-    return StreamingResponse(stream_archive(), media_type="application/zip", headers=headers)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(archive_name)}"
+    }
+    return StreamingResponse(
+        stream_archive(), media_type="application/zip", headers=headers
+    )
 
 
 @app.get("/api/vocal-waveform")
 def vocal_waveform(audio_filename: str):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     stem_dir = _find_project_stems(audio_path.parent, audio_path.stem)
     if not stem_dir:
-        return JSONResponse(status_code=404, content={"message": "No vocals stem found for this project."})
+        return JSONResponse(
+            status_code=404,
+            content={"message": "No vocals stem found for this project."},
+        )
     vocal_path = next(
-        (stem_dir / name for name in ("vocals.wav", "vocals.mp3") if (stem_dir / name).is_file()),
+        (
+            stem_dir / name
+            for name in ("vocals.wav", "vocals.mp3")
+            if (stem_dir / name).is_file()
+        ),
         None,
     )
     if not vocal_path:
-        return JSONResponse(status_code=404, content={"message": "No vocals audio file found for this project."})
+        return JSONResponse(
+            status_code=404,
+            content={"message": "No vocals audio file found for this project."},
+        )
     relative = _relative_to_output(vocal_path)
     return {"filename": relative, "url": f"/files/{quote(relative, safe='/')}"}
 
@@ -3880,7 +5141,9 @@ def vocal_waveform(audio_filename: str):
 @app.get("/api/load-project-state")
 def load_project_state(audio_filename: str):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
@@ -3893,27 +5156,38 @@ def load_project_state(audio_filename: str):
         state = json.loads(proj_path.read_text(encoding="utf-8"))
         return {"status": "success", "project_name": project_dir.name, "state": state}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"message": f"Failed to load project state: {exc}"})
+        return JSONResponse(
+            status_code=500, content={"message": f"Failed to load project state: {exc}"}
+        )
 
 
 @app.post("/api/save-project-state")
 def save_project_state(audio_filename: str = Form(...), state_json: str = Form(...)):
     try:
-        audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     project_dir = audio_path.parent
-    proj_path = _find_project_state(project_dir) or project_dir / f"{project_dir.name}.proj.json"
+    proj_path = (
+        _find_project_state(project_dir)
+        or project_dir / f"{project_dir.name}.proj.json"
+    )
     try:
         parsed = json.loads(state_json)
     except Exception as exc:
-        return JSONResponse(status_code=400, content={"message": f"Invalid state JSON: {exc}"})
+        return JSONResponse(
+            status_code=400, content={"message": f"Invalid state JSON: {exc}"}
+        )
 
     parsed["project_name"] = project_dir.name
     parsed["audio_filename"] = _relative_to_output(audio_path)
     parsed["saved_at"] = int(time.time())
-    proj_path.write_text(json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
+    proj_path.write_text(
+        json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     global_bg = OUTPUT_DIR / "custom_bg.jpg"
     if parsed.get("preview", {}).get("bgType") == "image" and global_bg.exists():
@@ -3922,14 +5196,21 @@ def save_project_state(audio_filename: str = Form(...), state_json: str = Form(.
         except Exception:
             pass
 
-    return {"status": "success", "message": f"Saved project state to {proj_path.name}.", "project_name": project_dir.name}
+    return {
+        "status": "success",
+        "message": f"Saved project state to {proj_path.name}.",
+        "project_name": project_dir.name,
+    }
+
 
 @app.post("/api/upload-bg")
 def upload_bg(file: UploadFile = File(...), audio_filename: str = Form("")):
     target = OUTPUT_DIR / "custom_bg.jpg"
     if audio_filename:
         try:
-            audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+            audio_path = _ensure_project_layout_for_audio(
+                _resolve_output_file(audio_filename)
+            )
             target = audio_path.parent / "custom_bg.jpg"
         except FileNotFoundError:
             pass
@@ -3942,9 +5223,11 @@ def upload_bg(file: UploadFile = File(...), audio_filename: str = Form("")):
 def health():
     return {"status": "ok"}
 
+
 @app.get("/", response_class=HTMLResponse)
 def index_page():
     return (WORKSPACE / "index.html").read_text()
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
