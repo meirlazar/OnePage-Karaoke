@@ -15,3 +15,4 @@ beautifulsoup4>=4.12,<5
 requests>=2.31,<3
 transformers>=4.37,<4.40
 yt-dlp>=2024.8
+moviepy>=1.0,<2
