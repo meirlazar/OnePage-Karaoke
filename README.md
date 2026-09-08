@@ -7,7 +7,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 
 
-<img width="936" height="710" alt="image" src="https://github.com/user-attachments/assets/9f4fc555-d728-4713-82f5-b7864ba9bcb0" />
+<img width="895" height="698" alt="image" src="https://github.com/user-attachments/assets/569e213c-f779-4cfa-87f6-45714d532f8a" />
 
 ## 🎉 v2.0.0 New Features (from v1.0.0)
 ### Canvas & Rendering
@@ -30,9 +30,7 @@
 - Multi-Language Transcription (Auto, English, Russian, Hebrew, Spanish, French, German, Italian, Portuguese, Polish)
 - 3 Lyrics Providers (lrclib, Genius, Syncedlyrics)
 - Word-Level Timing Correction with 3 AI modes:
-- Minor (conservative, max ±2s adjustment)
-- Major (full AI re-alignment)
-- Custom (user-configurable max offset: 0.5s–15s)
+- Minor (conservative, max ±2s adjustment), Major (full AI re-alignment), and others...
 - Lyric Revision History (step backward/forward through versions)
 - Auto Word-Grouping (regroups single-word AI timings into readable phrases: 3–10 words per line)
 - Lyric Editor with Live Preview Updates
@@ -45,7 +43,7 @@
 - Per-Project Organization (all assets in project-specific directories)
 ### UI/UX
 - Collapsible Section System ([1] Get A Song, [2] Pull Lyrics, [3] Edit Lyrics, [4] Render)
-- 6 Built-in Themes (Catppuccin Mocha, Dracula, Gruvbox Dark, Nord, Rosé Pine, Tokyo Night)
+- Multiple Built-in Themes (Catppuccin Mocha, Dracula, Gruvbox Dark, Nord, Rosé Pine, Tokyo Night)
 - Theme generator (bash script) - auto generates a random but complementary theme and adds it to the themes directory.
 - Theme System with Metadata (source credit, license, author info display)
 - Compact Control Bar (font selector, size/gap/padding sliders, color pickers, FX controls in header overlay)
@@ -154,7 +152,9 @@ Use this interface to paste YouTube/web URLs. Downloaded media will be sent dire
 **Word-Level Timing Mode**
 - When a word starts press 'S' and press 'F' when it finishes (useful when there is a delay before the next word starts, otherwise just keep pressing 'S' at the beginning of each word being sung).
 - Press the same Timing Mode button to exit that mode.
-- Press Push to Editor when done either with all the lyrics or even if you changed the timing on a few words, and it will reflect in the Edit & Render window.
+- Timing is automatically adjusted in real time in the Preview Window and the Lyrics Editor.
+- Were you too slow? No worries, press the 'I'm Slow' button to have all the timings adjusted by -00.00.05
+- Were you too fast? No worries, press the 'I'm Fast' button to have all the timings adjusted by +00.00.05
   
 **Auto-Correct Word Timing**
 - Alternatively you can have AI try to correct the word-level timing on the song.
@@ -162,12 +162,27 @@ Use this interface to paste YouTube/web URLs. Downloaded media will be sent dire
 **Reverting your lyrics**
 - Go forward or backwards through the lyric revisions in case you prefer one over the other.
 
+**Line Breaks**
+- In the Lyrics Manager, Press Enter after a word/line to have the preview register it as the start of another line/sentence.
+
 **Save Your Progress**
 - When satisifed or just done for now, press Save Project Snapshot and resume later by simply pressing Load in the Media Vault, all settings will be saved.
 
+**Chorus Vocals**
+Do you want certain words sung in your karaoke video, and want 100% control of over which ones? You got it!
+- In the Lyrics Editor, select the words/lines that you want to hear the vocals in your final karaoke video.
+- Then press +Chorus button.
+- They will be highlighted/bolded and when you generate a Karaoke + Chorus Video,  you will hear the original singer's vocals on those words (assuming your timing is correct).
+
+- To remove any words/lines, simply select the words/lines, and press -Chorus.
+- Those lines will be unbolded again.
+  
 **Making the Karaoke Videos**
-- Press Render Preview to have a 1080p video created (with the vocals and your word-level timed lyrics) in the output directory under the projectname.
-- Press Export Final to have a 1080p video created (without the vocals, and with your word-level timed lyrics) in the output directory under the projectname.
+- First Select the Resolution you want (when making the edits, I find it is much more responsive if you select a lower resolutino while you are creating/editing).
+- Make sure your lyrics, timings, and Fx, colors, etc are all selected/chosen.
+- Press 1,2, or 3 of the Create Karaoke Buttons below the Preview (Normal Karaoke, Karaoke+Chorus, Karaoke+Original Vocals)
+- Videos will start being generated or queu up if anopther job is active.
+- They will show up in the project folder under the output directory. 
 
 ## Directory Structure Mapping
 The Docker configuration mounts a local ./workspace folder to persist your files:
