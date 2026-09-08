@@ -7,7 +7,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 
 
-<img width="1099" height="842" alt="image" src="https://github.com/user-attachments/assets/28f39893-4e8e-42cf-816e-62fe6fdbf7b5" />
+<img width="936" height="710" alt="image" src="https://github.com/user-attachments/assets/9f4fc555-d728-4713-82f5-b7864ba9bcb0" />
 
 ## 🎉 v2.0.0 New Features (from v1.0.0)
 ### Canvas & Rendering
