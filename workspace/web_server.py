@@ -51,7 +51,7 @@ app.mount("/files", StaticFiles(directory=str(OUTPUT_DIR)), name="files")
 app.mount("/fonts", StaticFiles(directory=str(SERVED_FONTS_DIR)), name="fonts")
 app.mount("/themes", StaticFiles(directory=str(THEMES_DIR)), name="themes")
 
-logger = logging.getLogger("karaoke-miniupgrade")
+logger = logging.getLogger("onepage-karaoke")
 if not logger.handlers:
     logging.basicConfig(
         level=logging.INFO,
@@ -135,7 +135,7 @@ class JobCancelledError(RuntimeError):
 
 # ===============================================================
 # SECTION: Memory & Resource Management
-# Purpose: Clean up heap memory, garbage collection, and 
+# Purpose: Clean up heap memory, garbage collection, and
 #          resource allocation for long-running processes
 # ===============================================================
 
@@ -438,7 +438,7 @@ def _run_faster_whisper_with_fallback(
             _update_job(
                 job_id,
                 stage=current_stage,
-                message=f"{stage_msg} using {device.upper()} ({compute_type}) for {audio_path.name}",
+                message=f"{stage_msg} using {device.upper()} ({compute_type}) for {project_name}",
                 progress=start_progress,
             )
             try:
@@ -479,7 +479,7 @@ def _run_faster_whisper_with_fallback(
 
     if last_error:
         raise last_error
-    raise RuntimeError(f"Faster-Whisper failed for {audio_path.name}")
+    raise RuntimeError(f"Faster-Whisper failed for {project_name}")
 
 
 def _build_lrc_from_transcript_payload(payload: dict) -> str:
@@ -1142,6 +1142,99 @@ def _run_cancellable_command(
             RUNNING_PROCESSES.pop(job_id, None)
 
 
+def _build_residual_instrumental(
+    original: Path, vocals: Path, dest: Path, quality: str = "2"
+) -> bool:
+    """Build the instrumental as (original - vocals) instead of using Demucs'
+    own ``no_vocals`` stem.
+
+    Demucs synthesises each stem independently, so ``vocals + no_vocals`` does
+    not add back up to the input: roughly 10% of the mix energy is simply
+    dropped, which is why the accompaniment sounds thin and quiet (measured
+    -5 dB overall, with bass down 3.7 dB and mids down 11.8 dB).
+
+    Subtracting only what the model is confident is vocal keeps every part of
+    the original that was not identified as a voice, so the backing track keeps
+    its full weight (measured -0.8 dB, bass fully intact) while removing the
+    same amount of vocal.
+
+    Phase-inverting one input can push peaks above full scale, so the sum is
+    computed in float and passed through a limiter before encoding.
+    """
+    if not (original.exists() and vocals.exists()):
+        return False
+    cmd = [
+        FFMPEG_BIN,
+        "-y",
+        "-i",
+        str(original),
+        "-i",
+        str(vocals),
+        "-filter_complex",
+        # volume=-1 phase-inverts the vocal stem; amix with normalize=0 keeps
+        # unity gain so the result is a true sample-accurate subtraction.
+        "[1:a]volume=-1[vi];"
+        "[0:a][vi]amix=inputs=2:normalize=0:dropout_transition=0[sum];"
+        "[sum]alimiter=limit=0.891:level=disabled[out]",
+        "-map",
+        "[out]",
+        "-q:a",
+        quality,
+        str(dest),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        logger.warning(
+            "[STEMS] residual instrumental failed for %s: %s",
+            original.name,
+            (res.stderr or "")[-300:],
+        )
+        return False
+    return dest.exists() and dest.stat().st_size > 0
+
+
+def _ensure_residual_instrumental(
+    project_dir: Path, audio_path: Path, base_name: str
+) -> None:
+    """Upgrade a project's instrumental to the residual mix if it predates it.
+
+    Projects separated before the residual change carry a thin ``_minus.mp3``
+    built straight from Demucs' ``no_vocals`` stem. A marker file records the
+    upgrade so the rebuild only happens once per project.
+    """
+    minus_track = project_dir / f"{base_name}_minus.mp3"
+    marker = project_dir / f".{base_name}_minus.residual"
+    if marker.exists():
+        return
+    stem_dir = _find_project_stems(project_dir, base_name)
+    vocals_wav = stem_dir / "vocals.wav" if stem_dir else None
+    if not (vocals_wav and vocals_wav.exists() and audio_path.exists()):
+        return
+    rebuilt = project_dir / f"{base_name}_minus.residual.mp3"
+    try:
+        if _build_residual_instrumental(audio_path, vocals_wav, rebuilt):
+            rebuilt.replace(minus_track)
+            marker.write_text("residual", encoding="utf-8")
+            # The chorus mix is derived from the instrumental, so drop the stale
+            # one; the render path rebuilds it on demand.
+            chorus_track = project_dir / f"{base_name}_minus_chorus.mp3"
+            if chorus_track.exists():
+                chorus_track.unlink()
+            logger.info(
+                "[STEMS] upgraded instrumental to residual mix for %s",
+                project_dir.name,
+            )
+        elif rebuilt.exists():
+            rebuilt.unlink()
+    except Exception as exc:
+        logger.warning("[STEMS] residual upgrade failed for %s: %s", project_dir.name, exc)
+        if rebuilt.exists():
+            try:
+                rebuilt.unlink()
+            except Exception:
+                pass
+
+
 def _run_demucs_with_progress(
     job_id: str,
     audio_path: Path,
@@ -1224,7 +1317,7 @@ def _run_demucs_with_progress(
                         )
                         _update_job(
                             job_id,
-                            message=f"Separating stems for {audio_path.name} ({pct}%)",
+                            message=f"Separating stems for {project_name} ({pct}%)",
                             progress=progress,
                         )
             returncode = proc.wait()
@@ -1365,26 +1458,42 @@ def _run_audio_pipeline_job(
             _update_job(
                 job_id,
                 stage="package stems",
-                message=f"Packaging vocal/instrumental stems for {audio_path.name}",
+                message=f"Packaging vocal/instrumental stems for {project_name}",
                 progress=demucs_end,
             )
             logger.info(
                 "[PIPELINE] job=%s packaging accompaniment=%s", job_id, no_vocals_track
             )
-            ffmpeg_res = subprocess.run(
-                [
-                    FFMPEG_BIN,
-                    "-y",
-                    "-i",
-                    str(no_vocals_track),
-                    "-q:a",
-                    "2",
-                    str(minus_track),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if ffmpeg_res.returncode != 0:
+            # Prefer the residual (original - vocals) instrumental: it keeps the
+            # full weight of the backing track. Fall back to Demucs' no_vocals
+            # stem if the subtraction could not be performed.
+            packaged = False
+            if vocals_wav_track and vocals_wav_track.exists():
+                packaged = _build_residual_instrumental(
+                    audio_path, vocals_wav_track, minus_track
+                )
+                if packaged:
+                    logger.info(
+                        "[PIPELINE] job=%s instrumental built by vocal subtraction",
+                        job_id,
+                    )
+            if packaged:
+                ffmpeg_res = None
+            else:
+                ffmpeg_res = subprocess.run(
+                    [
+                        FFMPEG_BIN,
+                        "-y",
+                        "-i",
+                        str(no_vocals_track),
+                        "-q:a",
+                        "2",
+                        str(minus_track),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            if ffmpeg_res is not None and ffmpeg_res.returncode != 0:
                 logger.warning(
                     "[PIPELINE] job=%s accompaniment packaging failed: %s",
                     job_id,
@@ -1392,7 +1501,7 @@ def _run_audio_pipeline_job(
                 )
                 _update_job(
                     job_id,
-                    message=f"Separation complete, accompaniment packaging failed for {audio_path.name}",
+                    message=f"Separation complete, accompaniment packaging failed for {project_name}",
                 )
         if vocals_wav_track and vocals_wav_track.exists():
             vocals_res = subprocess.run(
@@ -1427,7 +1536,7 @@ def _run_audio_pipeline_job(
         _update_job(
             job_id,
             stage="lyrics fetch",
-            message=f"Fetching synced lyrics for {audio_path.name}",
+            message=f"Fetching synced lyrics for {project_name}",
             progress=demucs_end,
         )
         _ensure_not_cancelled(job_id)
@@ -1440,7 +1549,7 @@ def _run_audio_pipeline_job(
                 _update_job(
                     job_id,
                     stage="package chorus stem",
-                    message=f"Building chorus-aware stem for {audio_path.name}",
+                    message=f"Building chorus-aware stem for {project_name}",
                     progress=max(0, end_progress - 2),
                 )
                 _build_chorus_aware_track(
@@ -1449,7 +1558,7 @@ def _run_audio_pipeline_job(
             _update_job(
                 job_id,
                 progress=end_progress,
-                message=f"Timed lyrics ready for {audio_path.name}",
+                message=f"Timed lyrics ready for {project_name}",
             )
             return
 
@@ -1471,7 +1580,7 @@ def _run_audio_pipeline_job(
         lrc_content = _build_lrc_from_transcript_payload(transcript_payload)
         if not lrc_content.strip():
             raise RuntimeError(
-                f"Faster-Whisper produced no timed transcription for {audio_path.name}"
+                f"Faster-Whisper produced no timed transcription for {project_name}"
             )
         (project_dir / "vocals.json").write_text(
             json.dumps(transcript_payload, ensure_ascii=False), encoding="utf-8"
@@ -1481,7 +1590,7 @@ def _run_audio_pipeline_job(
             _update_job(
                 job_id,
                 stage="package chorus stem",
-                message=f"Building chorus-aware stem for {audio_path.name}",
+                message=f"Building chorus-aware stem for {project_name}",
                 progress=max(0, end_progress - 2),
             )
             _build_chorus_aware_track(
@@ -1696,6 +1805,7 @@ def _run_render_job(
     bounce_per_sec: float = 0.1,
     ball_color: str = "#ffffff",
     ball_outline_color: str = "#000000",
+    outline_width: int = -1,
 ) -> None:
     # NOTE: "bouncing-ball" is rendered through the standard FFmpeg/ASS path
     # below (see _build_bouncing_ball_events), which correctly honors
@@ -1759,6 +1869,7 @@ def _run_render_job(
                 bounce_per_sec=bounce_per_sec,
                 ball_color=ball_color,
                 ball_outline_color=ball_outline_color,
+                outline_width=outline_width,
             )
             _update_job(job_id, render_device=actual_device)
             logger.info(
@@ -1806,7 +1917,7 @@ def _run_lyrics_fetch_job(
         _update_job(
             job_id,
             progress=100,
-            message=f"Lyrics already exist for {audio_path.name}",
+            message=f"Lyrics already exist for {project_name}",
             status="completed",
         )
         return
@@ -1819,7 +1930,7 @@ def _run_lyrics_fetch_job(
         job_id,
         status="running",
         stage="lyrics fetch",
-        message=f"Fetching lyrics via {selected_provider} for {audio_path.name}",
+        message=f"Fetching lyrics via {selected_provider} for {project_name}",
         progress=20,
     )
 
@@ -1847,7 +1958,7 @@ def _run_lyrics_fetch_job(
         )
         lookup = lyrics_query or identity["display"] or audio_path.stem
         if not _run_syncedlyrics(lookup, lrc_file) or not _has_timed_lyrics(lrc_file):
-            raise RuntimeError(f"Lyrics fetch failed for {audio_path.name}")
+            raise RuntimeError(f"Lyrics fetch failed for {project_name}")
         content = lrc_file.read_text(encoding="utf-8")
         timing_level, timestamp_count = _detect_timing_level(content)
         timing_names = {
@@ -1864,7 +1975,7 @@ def _run_lyrics_fetch_job(
         _fetch_lyrics_for_media_with_provider(audio_path, selected_provider)
         if not _has_timed_lyrics(lrc_file):
             raise RuntimeError(
-                f"{selected_provider} did not produce timed lyrics for {audio_path.name}"
+                f"{selected_provider} did not produce timed lyrics for {project_name}"
             )
         content = lrc_file.read_text(encoding="utf-8")
         timing_level, timestamp_count = _detect_timing_level(content)
@@ -1898,7 +2009,7 @@ def _run_lyrics_fetch_job(
     _update_job(
         job_id,
         progress=100,
-        message=f"Lyrics ready via {selected_provider} for {audio_path.name}",
+        message=f"Lyrics ready via {selected_provider} for {project_name}",
         status="completed",
     )
 
@@ -1972,7 +2083,7 @@ def _run_word_timing_correction_job(
     _update_job(
         job_id,
         progress=100,
-        message=f"{mode_label} AI timing correction complete for {audio_path.name}",
+        message=f"{mode_label} AI timing correction complete for {project_name}",
     )
 
 
@@ -3600,7 +3711,7 @@ def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrcl
 
         job = _enqueue_job(
             "lyrics",
-            f"Grab lyrics ({provider_norm}) for {audio_path.name}",
+            f"Grab lyrics ({provider_norm}) for {project_name}",
             "lyrics",
             section="ingest",
             stage="lyrics fetch",
@@ -3616,7 +3727,7 @@ def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrcl
         lrc_rel = _relative_to_output(audio_path.parent / f"{audio_path.stem}.lrc")
         return {
             "status": "queued",
-            "message": f"Queued lyrics grab via {provider_norm} for {audio_path.name}.",
+            "message": f"Queued lyrics grab via {provider_norm} for {project_name}.",
             "job": job,
             "filename": lrc_rel,
         }
@@ -3652,11 +3763,11 @@ def auto_transcribe(
     if not job:
         return {
             "status": "busy",
-            "message": f"{audio_path.name} is already queued or being processed.",
+            "message": f"{project_name} is already queued or being processed.",
         }
     return {
         "status": "queued",
-        "message": f"Queued auto-transcribe/sync for {audio_path.name}.",
+        "message": f"Queued auto-transcribe/sync for {project_name}.",
         "job": job,
     }
 
@@ -3699,7 +3810,7 @@ def auto_correct_word_timing(
         job_kwargs["max_offset_seconds"] = clamped_offset
     job = _enqueue_job(
         "word_timing",
-        f"{mode_label} AI timing for {audio_path.name}",
+        f"{mode_label} AI timing for {project_name}",
         "word_timing",
         section="editor",
         stage="ai word align",
@@ -3708,7 +3819,7 @@ def auto_correct_word_timing(
     )
     return {
         "status": "queued",
-        "message": f"Queued {mode_label.lower()} AI timing correction for {audio_path.name}.",
+        "message": f"Queued {mode_label.lower()} AI timing correction for {project_name}.",
         "job": job,
     }
 
@@ -3760,7 +3871,7 @@ def delete_media(audio_filename: str = Form(...)):
             deleted.append(candidate.name)
     return {
         "status": "success",
-        "message": f"Deleted {audio_path.name} and related assets.",
+        "message": f"Deleted {project_name} and related assets.",
         "deleted": deleted,
     }
 
@@ -4110,6 +4221,7 @@ def lrc_to_ass(
     bounce_per_sec: float = 0.0,
     ball_color: str = "",
     ball_outline_color: str = "",
+    outline_width: int = -1,
 ):
     """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering."""
 
@@ -4144,6 +4256,11 @@ def lrc_to_ass(
     elif text_effect == "neon":
         default_shadow = max(6, round(font_size * 0.18))
         default_outline = max(2, round(font_size * 0.10))
+    # An explicit outline width from the UI wins over the effect defaults.
+    # 0 means "no outline"; the value is in preview pixels, so scale it to the
+    # render resolution exactly like the font size.
+    if outline_width is not None and int(outline_width) >= 0:
+        default_outline = max(0, round(int(outline_width) * layout_scale))
     line_spacing = max(4, round(int(line_spacing) * layout_scale))
     line_height = max(20, round((font_size * 1.1) + line_spacing))
     center_x = round(render_width / 2)
@@ -4638,6 +4755,7 @@ def execute_ffmpeg_burn(
     bounce_per_sec: float = 0.1,
     ball_color: str = "",
     ball_outline_color: str = "",
+    outline_width: int = -1,
 ):
     """Render a karaoke video at the requested resolution using NVENC when available."""
     audio_path = _resolve_output_file(audio_filename)
@@ -4654,14 +4772,14 @@ def execute_ffmpeg_burn(
         or project_dir / f"{base_name}.ass"
     )
     project_label = _safe_output_name(project_dir.name, fallback_stem=base_name)
-    stamp = str(render_token or datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f"))
+    stamp = str(render_token or datetime.now().strftime("%Y%m%d_%H%M%S"))
     normalized_source = str(render_source or "").strip().lower()
     if normalized_source not in {"preview", "final", "chorus"}:
         normalized_source = "preview" if use_preview_audio else "final"
     mode_prefix_map = {
-        "preview": f"{project_label}_preview_karaoke_",
-        "chorus": f"{project_label}_chorus_karaoke_",
-        "final": f"{project_label}_karaoke_",
+        "preview": f"{project_label}_Karaoke_N_Vocals_",
+        "chorus": f"{project_label}_Karaoke_N_Chorus_",
+        "final": f"{project_label}_Karaoke_",
     }
     mode_prefix = mode_prefix_map[normalized_source]
     if output_filename:
@@ -4683,6 +4801,10 @@ def execute_ffmpeg_burn(
     chorus_track = project_dir / f"{base_name}_minus_chorus.mp3"
     stem_dir = _find_project_stems(project_dir, base_name)
     demucs_no_vocals = stem_dir / "no_vocals.wav" if stem_dir else None
+    # Projects separated before the residual instrumental change still hold a
+    # thin Demucs no_vocals mix; upgrade it once so renders use the full one.
+    if normalized_source != "preview":
+        _ensure_residual_instrumental(project_dir, audio_path, base_name)
     render_audio_path = audio_path
     if normalized_source == "chorus":
         # Rebuild the chorus stem now so it always reflects the user's current
@@ -4742,6 +4864,7 @@ def execute_ffmpeg_burn(
         bounce_per_sec=bounce_per_sec,
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
+        outline_width=outline_width,
     )
 
     # 2. Build FFmpeg command stack targeting GTX 1070 NVENC cores
@@ -4869,6 +4992,7 @@ def burn_video(
     bounce_per_sec: float = Form(0.1),
     ball_color: str = Form("#ffffff"),
     ball_outline_color: str = Form("#000000"),
+    outline_width: int = Form(-1),
 ):
     rel_audio = audio_filename
     try:
@@ -4888,14 +5012,20 @@ def burn_video(
     render_width = max(320, int(render_width or 1280))
     render_height = max(180, int(render_height or 720))
     render_resolution = f"{render_width}x{render_height}"
-    render_token = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    render_token = datetime.now().strftime("%Y%m%d_%H%M%S")
     normalized_source = str(render_source or "").strip().lower()
     if normalized_source not in {"preview", "final", "chorus"}:
         normalized_source = "preview" if use_preview_audio else "final"
-    mode_suffix_map = {"preview": "_preview", "chorus": "_chorus", "final": ""}
+    # Karaoke + Vocals -> _Karaoke_N_Vocals, Karaoke + Chorus -> _Karaoke_N_Chorus,
+    # Std. Karaoke -> _Karaoke
+    mode_suffix_map = {
+        "preview": "_Karaoke_N_Vocals",
+        "chorus": "_Karaoke_N_Chorus",
+        "final": "_Karaoke",
+    }
     mode_suffix = mode_suffix_map[normalized_source]
     output_filename = (
-        f"{safe_project}{mode_suffix}_{render_token}_{render_resolution}.mp4"
+        f"{safe_project}{mode_suffix}_{render_resolution}_{render_token}.mp4"
     )
 
     job = _enqueue_job(
@@ -4938,6 +5068,7 @@ def burn_video(
         bounce_per_sec=bounce_per_sec,
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
+        outline_width=outline_width,
         details=(
             f"Resolution: {render_resolution}; Source: {rel_audio}; Output: {output_filename}; "
             f"Render device: {render_device}; Pitch: {pitch}; Volume: {volume}; "

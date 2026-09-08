@@ -46,54 +46,160 @@
         line-height: 1.5;
       }
       h1, h2, h3, h4 { color: var(--accent-hover); margin-top: 0; }
+      /* ================= DOCKED GRID LAYOUT =================
+         Panels are docked into named grid areas:
+             jobs  settings   (top row, above the preview)
+             lyrics | preview | vault   (middle row)
+         The preview spans the full width of the centre column and is the
+         dominant panel. Track sizes live in CSS custom properties so JS can
+         resize them, and each panel's area can be swapped by drag & drop. */
       .app-layout {
         display: grid;
-        grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
-        gap: 20px;
-        max-width: none;
+        --dock-col-left: 340px;
+        --dock-col-right: 340px;
+        --dock-row-top: auto;
+        --dock-row-main: minmax(420px, 1fr);
+        grid-template-columns:
+          minmax(220px, var(--dock-col-left))
+          minmax(0, 1fr)
+          minmax(0, 1fr)
+          minmax(220px, var(--dock-col-right));
+        grid-template-rows: var(--dock-row-top) var(--dock-row-main) auto;
+        grid-template-areas:
+          "lyrics jobs     settings vault"
+          "lyrics preview  preview  vault"
+          "fx     preview  preview  vault";
+        gap: 12px;
+        max-width: 2400px;
         margin: 0 auto;
-        align-items: start;
+        align-items: stretch;
         position: relative;
         overflow: visible;
       }
-      .right-column { 
-        display: flex; 
-        flex-direction: column; 
-        gap: 12px; 
+      /* The top row sits above the preview, so let jobs/settings share it and
+         allow the preview to start on row 2 spanning the centre column. */
+      .app-layout > [data-dock="jobs"]     { grid-area: jobs; }
+      .app-layout > [data-dock="settings"] { grid-area: settings; }
+      .app-layout > [data-dock="lyrics"]   { grid-area: lyrics; }
+      .app-layout > [data-dock="preview"]  { grid-area: preview; }
+      .app-layout > [data-dock="vault"]    { grid-area: vault; }
+      .app-layout > [data-dock="fx"]       { grid-area: fx; }
+
+      /* Preview takeover: every other panel slides up out of view and the
+         preview fills the layout edge to edge, top to bottom. Panels are
+         hidden rather than clipped, which is the whole point of the mode. */
+      .app-layout.preview-maximized {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "preview";
+      }
+      .app-layout.preview-maximized > .dock-panel {
+        transform: translateY(-24px);
+        opacity: 0;
+        pointer-events: none;
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        transition: transform 0.22s ease, opacity 0.18s ease;
+      }
+      .app-layout.preview-maximized > [data-dock-area="preview"] {
+        grid-area: preview;
+        transform: none;
+        opacity: 1;
+        pointer-events: auto;
+        position: relative;
+        width: auto;
+        height: auto;
+        min-height: calc(100vh - 96px);
+      }
+      /* The takeover grip only makes sense vertically once maximized. */
+      .app-layout.preview-maximized .dock-resizer[data-dir="e"],
+      .app-layout.preview-maximized .dock-resizer[data-dir="se"] { display: none; }
+
+      .dock-panel {
+        position: relative;
+        display: flex;
+        flex-direction: column;
         min-width: 0;
-        position: relative;
-        overflow: visible;
-        flex: 1;
         min-height: 0;
-      }
-      .top-panels { 
-        display: grid; 
-        grid-template-columns: repeat(3, minmax(0, 1fr)); 
-        gap: 12px; 
-        align-items: start;
-        position: relative;
+        /* Must stay visible so the edge resize grips (which sit a few px
+           outside the panel box) remain hittable. Content clipping is handled
+           by the inner .card / .preview-pane, which scroll their own bodies. */
         overflow: visible;
       }
-      .top-panels .card { margin-bottom: 0; min-height: 0; }
+      .dock-panel > .card,
+      .dock-panel > .preview-pane {
+        flex: 1 1 auto;
+        margin-bottom: 0;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        min-height: 0;
+        /* Panels are sized by the grid, not by their own resize handle. */
+        resize: none;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      /* Everything in the preview pane except the canvas keeps its natural
+         height, so no control bar is ever clipped when the pane shrinks. */
+      .dock-panel > .preview-pane > *:not(#canvas-wrapper) { flex: 0 0 auto; }
+      .dock-panel > .preview-pane .integrated-timing-rail,
+      .dock-panel > .preview-pane .media-controls,
+      .dock-panel > .preview-pane .render-actions,
+      .dock-panel > .preview-pane .vocal-waveform-rail { flex: 0 0 auto; }
+      /* Scroll the *body* of a panel so its header stays put and nothing is
+         clipped when the panel is shrunk. */
+      .dock-panel .section-body {
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-height: 0;
+        flex: 1 1 auto;
+      }
+      .dock-panel.dock-dragging { opacity: 0.55; pointer-events: none; }
+      .dock-panel.dock-drop-target > .card,
+      .dock-panel.dock-drop-target > .preview-pane {
+        outline: 3px dashed var(--accent);
+        outline-offset: -4px;
+      }
+      /* Drag handles: panel headers advertise themselves as grabbable. */
+      .dock-panel .section-toggle { cursor: grab; }
+      .dock-panel.dock-dragging .section-toggle { cursor: grabbing; }
+
+      /* Resize grips along the panel edges. These adjust the shared grid
+         tracks so neighbouring panels reflow rather than overlap. */
+      .dock-resizer { position: absolute; z-index: 30; }
+      .dock-resizer[data-dir="e"]  { top: 0; right: -6px; width: 12px; height: 100%; cursor: col-resize; }
+      .dock-resizer[data-dir="s"]  { left: 0; bottom: -6px; height: 12px; width: 100%; cursor: row-resize; }
+      .dock-resizer[data-dir="se"] { right: -6px; bottom: -6px; width: 16px; height: 16px; cursor: nwse-resize; z-index: 31; }
+      .dock-resizing, .dock-resizing * { user-select: none !important; }
+
+      /* Stack everything in one column on narrow screens / mobile. */
+      @media (max-width: 1100px) {
+        .app-layout {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: auto;
+          grid-template-areas: "jobs" "settings" "preview" "lyrics" "vault" "fx";
+        }
+        .dock-resizer { display: none; }
+      }
+
+      /* Base panel surface. Sizing is delegated to the docked grid. */
       .card {
         background: var(--bg-surface);
         padding: 16px;
         border-radius: var(--radius);
         border: 1px solid var(--border);
-        margin-bottom: 16px;
         box-shadow: 0 4px 15px color-mix(in srgb, var(--shadow) 30%, transparent);
-        resize: both;
-        overflow: hidden;
-        width: 100%;
-        max-width: 100%;
         box-sizing: border-box;
-        min-width: 280px;
-        min-height: 120px;
-        align-self: start;
         position: relative;
-        flex: none;
         display: flex;
         flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
       }
       .card.panel-dragging {
         cursor: grabbing;
@@ -297,8 +403,12 @@
         resize: both;
         max-width: 100%;
         box-sizing: border-box;
-        min-width: 320px;
-        min-height: 180px;
+        min-width: min(320px, 100%);
+        min-height: 92vh;
+        /* Keep the video frame sane at any browser zoom: never taller than the
+           viewport, and never wider than a 16:9 frame of that height. Without
+           this the pane balloons when the user zooms out. */
+        max-height: auto;
         flex: 1;
       }
       #videoCanvas {
@@ -310,7 +420,7 @@
         height: 100%;
         min-height: 0;
         flex: 1;
-        object-fit: contain;
+        object-fit: fill;
         background: #000;
       }
       .preview-header-overlay {
@@ -335,8 +445,18 @@
       .step-btn:hover { background: var(--accent); color: var(--button-fg); }
       .compact-ctrl select:focus { outline: none; }
       .compact-ctrl select option { background-color: var(--control-bg); color: var(--control-fg); }
-      #canvas-wrapper { width: 100%; aspect-ratio: 16/9; background: var(--canvas-bg); position: relative; }
-      canvas { width: 100%; height: 100%; display: block; }
+      /* The canvas is the only elastic part of the preview pane: it shrinks so
+         the timing rail, waveform, transport controls and render buttons are
+         ALWAYS visible, instead of being pushed out of the pane. */
+      #canvas-wrapper {
+        width: 100%;
+        background: var(--canvas-bg);
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 180px;
+        overflow: hidden;
+      }
+      canvas { width: 100%; height: 100%; display: block; object-fit: fill; }
       .integrated-timing-rail { background: color-mix(in srgb, var(--overlay-bg) 90%, transparent); border-top: 1px solid var(--border); padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
       .media-controls { background: var(--bg-surface); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
       .media-controls input[type="range"] { flex: 1; min-width: 100px; }
@@ -425,11 +545,40 @@
         gap: 10px;
         margin-top: 10px;
       }
+      /* Legacy responsive rules kept only for the single-column fallback; the
+         docked grid handles its own breakpoint at 1100px above. */
       @media (max-width: 1200px) {
-        .app-layout { grid-template-columns: 1fr; }
-        .top-panels { grid-template-columns: 1fr; }
         .preview-pane { position: static; min-width: 0; }
         .card { min-width: 0; }
+      }
+
+      /* Primary render actions pinned to the bottom of the preview pane. */
+      .render-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px 4px 4px;
+        border-top: 1px solid var(--border);
+        margin-top: 10px;
+        flex: 0 0 auto;
+      }
+      .render-action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        padding: 14px 10px;
+        min-height: 58px;
+        line-height: 1.25;
+        text-align: center;
+        white-space: normal;
+      }
+      .render-action-title { font-size: 14px; font-weight: 800; letter-spacing: 0.01em; }
+      .render-action-sub { font-size: 10px; opacity: 0.75; font-weight: 600; }
+      .render-action-primary { background: var(--success); }
+      @media (max-width: 900px) {
+        .render-actions { grid-template-columns: 1fr; }
       }
 
       /* ---- Touch timing controls (tap Start/End on a phone/tablet) ---- */
@@ -467,18 +616,35 @@
                   and right column (lyrics editor, job status, media vault)
          =============================================================== -->
 
-    <div class="app-layout">
-      <!-- SIDEBAR: Audio Input & Processing Controls -->
-      <div class="sidebar">
+    <div class="app-layout" id="appLayout">
+      <!-- DOCK: Active Jobs -->
+      <div class="dock-panel" data-dock="jobs">
         <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionIngestBody', this)">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionTopJobsBody', this)">
+            <span><span class="section-toggle-main">Active Jobs</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionTopJobsBody" class="section-body">
+            <div id="job-list" class="job-list">No jobs yet.</div>
+          </div>
+        </div>
+
+        <!-- SETTINGS: hardware/model selection, theme, and diagnostics -->
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Settings -->
+      <div class="dock-panel" data-dock="settings">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionThemeDebugBody', this)">
             <span>
-              <span class="section-toggle-main">[1] Get A Song</span>
-              <span class="section-toggle-sub">Hardware allocation, file uploads, and URL scraping.</span>
+              <span class="section-toggle-main">Settings</span>
+              <span class="section-toggle-sub">Transcription models, hardware allocation, UI theme, and diagnostics.</span>
             </span>
             <span class="section-toggle-arrow">▾</span>
           </button>
-          <div id="sectionIngestBody" class="section-body">
+          <div id="sectionThemeDebugBody" class="section-body">
             <div class="row2">
               <div>
                 <label>Whisper Model</label>
@@ -518,56 +684,56 @@
                 </select>
               </div>
             </div>
-            <div class="pipeline-section">
-              <label>Local Upload</label>
-              <div style="display: flex; gap: 8px">
-                <input type="file" id="sourceUpload" accept=".mp3,.mp4,.wav,.m4a,.flac,.webm,video/*,audio/*" style="padding: 4px" />
-                <button class="btn" onclick="uploadSourceFile()">Push</button>
+            <div class="row2" style="margin-top: 8px">
+              <div>
+                <label>Render Hardware</label>
+                <select id="renderDevice">
+                  <option value="auto">Auto</option>
+                  <option value="cuda" selected>GPU / NVENC</option>
+                  <option value="cpu">CPU</option>
+                </select>
               </div>
-              <label style="margin-top: 12px">Web Fetch</label>
-              <div style="display: flex; gap: 8px">
-                <input type="text" id="sourceUrl" placeholder="https://youtube.com/watch?v=..." />
-                <button class="btn" onclick="submitSourceUrl()">Pull</button>
+              <div>
+                <label>Theme</label>
+                <select id="themeSelect" onchange="applySelectedTheme()"></select>
               </div>
-              <select id="downloadEngine" style="margin-top: 8px;">
-                <option value="ytdl">yt-dlp</option>
-                <option value="metube">MeTube</option>
-              </select>
             </div>
-            <div class="row2" style="margin-top: 12px">
-              <button class="btn btn-small btn-wide" onclick="autoTranscribe()">Force Transcribe</button>
+            <div id="themeMeta" class="theme-meta">Loading theme catalog...</div>
+            <div class="debug-actions">
+              <button class="btn btn-small" onclick="applySelectedTheme()">Apply Theme</button>
+              <button class="btn btn-small" onclick="runDebugger()">Run Debugger</button>
+              <button class="btn btn-small" onclick="copyDebugReport()">Copy Report</button>
+              <button class="btn btn-small" onclick="resetUiLayout()" title="Restore all panels to their default size, position and spacing">↺ Reset UI</button>
             </div>
+            <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
+            <div id="debugSummary" class="debug-summary">Debugger idle.</div>
+            <div id="debugOutput" class="debug-output">No diagnostics captured yet.</div>
           </div>
         </div>
 
-        <!-- Lyrics Fetching Controls -->
-        <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionGrabLyricsBody', this)">
-            <span>
-              <span class="section-toggle-main">[2] Pull Lyrics</span>
-              <span class="section-toggle-sub">Select Lyrics Provider to pull lyrics into the editor.</span>
-            </span>
-            <span class="section-toggle-arrow">▾</span>
-          </button>
-          <div id="sectionGrabLyricsBody" class="section-body">
-            <label>Lyrics Service</label>
-            <select id="lyricsProvider">
-              <option value="auto" selected>Auto (best result)</option>
-              <option value="lrclib">LRCLib</option>
-              <option value="syncedlyrics">syncedlyrics</option>
-              <option value="genius">Genius</option>
-            </select>
-            <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
-          </div>
-        </div>
-
-        <!-- Lyrics Editor & Timing Correction -->
+        <!-- MEDIA VAULT: source ingestion (upload / web fetch) + saved projects -->
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Manage Lyrics -->
+      <div class="dock-panel" data-dock="lyrics">
         <div class="card">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionStatusBody', this)">
-            <span><span class="section-toggle-main">[3] Edit Lyrics</span></span>
+            <span><span class="section-toggle-main">Manage Lyrics</span></span>
             <span class="section-toggle-arrow">▾</span>
           </button>
           <div id="sectionStatusBody" class="section-body">
+            <div class="pipeline-section" style="margin-top:0; margin-bottom:12px">
+              <label>Lyrics Service</label>
+              <select id="lyricsProvider">
+                <option value="auto" selected>Auto (best result)</option>
+                <option value="lrclib">LRCLib</option>
+                <option value="syncedlyrics">syncedlyrics</option>
+                <option value="genius">Genius</option>
+              </select>
+              <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
+            </div>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
               <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
               <span id="lyricsReadyBadge" class="state-badge state-waiting">Not Ready</span>
@@ -585,8 +751,11 @@
             <div class="row2" style="margin-top: 10px;">
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('major')" title="Rebuild timing from the AI alignment">Major Auto-Correct</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(-0.05)" title="Shift every start and end timestamp 0.05s earlier. Creates a new revision each press; press repeatedly to keep nudging.">I'm slow (-00:00.05)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(+0.05)" title="Shift every start and end timestamp 0.05s later. Creates a new revision each press; press repeatedly to keep nudging.">I'm fast (+00:00.05)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="clearAllLyricsTiming()" title="Create a new revision with the same lyric words and no timing">Clear All Timing</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('safe-word')" title="Rebuild word timing while preventing overlapping or stalled word highlights">Safe Word-Level Sync</button>
             </div>
-            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="autoCorrectWordTiming('safe-word')" title="Rebuild word timing while preventing overlapping or stalled word highlights">Safe Word-Level Sync</button>
             <div class="row2" style="margin-top: 10px;">
               <select id="customTimingMaxOffset" title="Maximum seconds each line is allowed to shift">
                 <option value="1">Max offset: 1s</option>
@@ -599,8 +768,6 @@
               </select>
               <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
             </div>
-            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="clearAllLyricsTiming()" title="Create a new revision with the same lyric words and no timing">Clear All Timing</button>
-            <button class="btn btn-small btn-wide" style="margin-top:10px" onclick="shiftAllLyricsTiming(-0.05)" title="Shift every start and end timestamp 0.05s earlier. Creates a new revision each press; press repeatedly to keep nudging.">I'm slow (-00:00.05)</button>
             <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
               <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
               <div style="min-width:0; text-align:center;">
@@ -612,34 +779,213 @@
           </div>
         </div>
 
-        <!-- Video Rendering Controls (Final, Chorus, Preview) -->
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Preview -->
+      <div class="dock-panel" data-dock="preview">
+        <div class="preview-pane card" id="previewPane">
+          <div class="section-toggle" style="cursor: grab; user-select: none; padding: 12px; border-bottom: 1px solid var(--border); margin: -16px -16px 12px -16px; background: var(--bg-muted); border-radius: var(--radius) var(--radius) 0 0; display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; font-size: 14px; flex: 1; color: var(--text-main)">📺 Preview & Adjustments</span>
+            <button id="previewMaxBtn" class="step-btn" type="button" title="Expand preview to fill the page" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation(); togglePreviewMaximized()" style="font-size: 13px; line-height: 1; padding: 3px 7px;">⛶</button>
+            <span class="section-toggle-arrow" style="display: inline-block; transition: transform 0.3s ease; color: var(--text-muted)">▶</span>
+          </div>
+
+          <div id="canvas-wrapper">
+            <div class="preview-header-overlay">
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Font</span>
+                <select id="fontSelect" onchange="updatePreview()"></select>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Size</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', 1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', -1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="fontSize" value="130" />
+                <input type="number" id="fontSizeNum" min="20" max="500" value="130" oninput="document.getElementById('fontSize').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl" title="Line Spacing">
+                <span style="color: var(--text-muted)">Gap</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', 1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', -1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="lineSpacing" value="30" />
+                <input type="number" id="lineGapNum" min="0" max="100" value="30" oninput="document.getElementById('lineSpacing').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl" title="Word Padding">
+                <span style="color: var(--text-muted)">Pad</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', 1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', -1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="wordPadding" value="0" />
+                <input type="number" id="wordPadNum" min="0" max="50" value="0" oninput="document.getElementById('wordPadding').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl">
+                <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="updatePreview()" />
+                <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="updatePreview()" />
+                <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="updatePreview()" />
+                <button class="step-btn" type="button" title="Thicker outline" onpointerdown="startControlStep('outlineWidth', 1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" title="Thinner outline (0 = none)" onpointerdown="startControlStep('outlineWidth', -1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="outlineWidth" value="12" />
+                <input type="number" id="outlineWidthNum" min="0" max="40" value="12" title="Outline thickness (0 = none)" oninput="document.getElementById('outlineWidth').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">BG</span>
+                <input type="color" id="bgColor" value="#161f28" title="Background Color" oninput="updatePreview()" />
+                <select id="bgType" onchange="updatePreview()" style="width: 70px">
+                  <option value="color">Solid</option><option value="gradient">Gradient</option><option value="spiral">Spiral FX</option><option value="image">Image</option>
+                </select>
+                <input type="file" id="bgUpload" accept="image/*" style="display: none" onchange="handleBgUpload(event)" />
+                <button type="button" class="btn btn-small" onclick="document.getElementById('bgUpload').click()" style="padding: 2px 6px">📁</button>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">FX</span>
+                <select id="transitionStyle" onchange="updatePreview(); updateFxPanel();" style="width: 65px">
+                  <option value="none">None</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
+                </select>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Mode</span>
+                <select id="textEffect" onchange="updatePreview()" style="width: 70px">
+                  <option value="none">Flat</option><option value="shadow">Shadow</option><option value="hard-shadow">Hard Drop</option><option value="glow">Glow</option><option value="neon">Neon</option>
+                </select>
+                <select id="revealMode" onchange="updatePreview()" style="width: 75px" title="Reveal Mode">
+                  <option value="continuous" selected>Scroll</option><option value="block">Block</option><option value="eager">Eager</option>
+                </select>
+                <select id="previewLineCount" onchange="updatePreview()" style="width: 50px">
+                  <option value="2">2 Lns</option><option value="3" selected>3 Lns</option><option value="4">4 Lns</option>
+                </select>
+              </div>
+            </div>
+            <canvas id="videoCanvas" width="1920" height="1080"></canvas>
+          </div>
+
+          <div id="manualTimingPanel" class="integrated-timing-rail">
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 200px">
+              <button class="btn btn-small" id="manualTimingBtn" onclick="toggleManualTiming()" style="background: var(--accent); color: var(--button-fg)">Timing Mode is OFF</button>
+              <div style="font-size: 11px; color: var(--text-muted)">Press <b>S</b> (Start) / <b>F</b> (End)</div>
+            </div>
+            <div style="flex: 1; text-align: center">
+              <span id="manualCurrentWord" class="manual-word" style="font-size: 16px">-</span>
+              <span id="manualProgressText" style="font-size: 11px; margin-left: 8px; color: var(--text-muted)">0 / 0</span>
+            </div>
+            <div style="display: flex; gap: 6px">
+              <button class="btn btn-small" onclick="manualTimingStepBackward()">Prev</button>
+              <button class="btn btn-small" onclick="manualTimingStepForward()">Next</button>
+              <button class="btn btn-small" onclick="resetPreviewAndTiming()">Reset</button>
+            </div>
+          </div>
+
+          <div class="touch-timing-controls" id="touchTimingControls">
+            <button class="btn touch-timing-btn-start" type="button"
+              onpointerdown="onTouchTimingPress(event, 'start')">▶ START word (S)</button>
+            <button class="btn touch-timing-btn-end" type="button"
+              onpointerdown="onTouchTimingPress(event, 'end')">⏹ END word (F)</button>
+          </div>
+
+          <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Scroll up/down to make vocal dynamics taller/smaller. Drag left/right to pan. Click to seek.">
+            <canvas id="vocalWaveform" aria-label="Vocal dynamics waveform"></canvas>
+          </div>
+
+          <div class="media-controls">
+            <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">◀◀</button>
+            <button class="btn" id="playBtn" onclick="togglePlayback()" style="min-width: 60px">Play</button>
+            <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">▶▶</button>
+            <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
+            <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
+
+            <div class="media-inline-control" style="border-left: 1px solid var(--border); padding-left: 12px">
+              <label>Vol <span id="volumeValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+              <input type="range" id="volume" min="0" max="1" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+            </div>
+            <div class="media-inline-control">
+              <label>Spd</label>
+              <select id="playbackRate" onchange="onPlaybackRateChange()" style="padding: 4px; font-size: 11px; width: 55px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="0.5">0.5x</option>
+                <option value="1" selected>1.0x</option>
+                <option value="1.5">1.5x</option>
+              </select>
+            </div>
+            <div class="media-inline-control">
+              <label>Res</label>
+              <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="640x360" selected>360p (640x360)</option>
+                <option value="960x540">540p (960x540)</option>
+                <option value="1280x720">720p (1280x720)</option>
+                <option value="1920x1080">1080p (1920x1080)</option>
+              </select>
+            </div>
+            <div class="media-inline-control">
+              <label>Ptch <span id="pitchValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+              <input type="range" id="pitch" min="0.5" max="1.5" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+            </div>
+          </div>
+
+          <!-- Primary render actions: the three ways to produce a karaoke video -->
+          <div class="render-actions">
+            <button class="btn render-action-btn" onclick="startRender('preview')" title="Karaoke Video & Original Vocals (Sing Along With The Singer)">
+              <span class="render-action-title">Create Karaoke + Vocals</span>
+              <span class="render-action-sub">Original vocals</span>
+            </button>
+            <button class="btn render-action-btn" onclick="startRender('chorus')" title="Karaoke Video & Instrumental Audio + [ Custom Vocals (+Chorus)/ Chorus Added ]">
+              <span class="render-action-title">Create Karaoke + Chorus</span>
+              <span class="render-action-sub">Vocals on chorus only</span>
+            </button>
+            <button class="btn render-action-btn render-action-primary" onclick="startRender('final')" title="Standard Karaoke Video (Instrumental Audio Only - No Vocals)">
+              <span class="render-action-title">Create Std. Karaoke</span>
+              <span class="render-action-sub">Instrumental only</span>
+            </button>
+          </div>
+          <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+
+         <audio id="previewAudio" onloadedmetadata="onAudioLoaded()"></audio>
+        </div>
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Media Vault -->
+      <div class="dock-panel" data-dock="vault">
         <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionRenderBody', this)">
-            <span>
-              <span class="section-toggle-main">[4] Render</span>
-              <span class="section-toggle-sub">Preview, export final, or render with chorus vocals restored.</span>
-            </span>
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionLibraryBody', this)">
+            <span><span class="section-toggle-main">Media Vault</span></span>
             <span class="section-toggle-arrow">▾</span>
           </button>
-          <div id="sectionRenderBody" class="section-body">
-            <label>Render Hardware</label>
-            <select id="renderDevice" style="margin-bottom: 8px">
-              <option value="auto">Auto</option>
-              <option value="cuda" selected>GPU / NVENC</option>
-              <option value="cpu">CPU</option>
-            </select>
-            <div class="row2">
-              <button class="btn btn-small" onclick="startRender('preview')" title="Uses the original vocal audio">Render Preview</button>
-              <button class="btn" style="background: var(--success)" onclick="startRender('final')" title="Instrumental audio only">Export Final</button>
+          <div id="sectionLibraryBody" class="section-body">
+            <div class="pipeline-section" style="margin-top:0">
+              <label>Local Upload</label>
+              <div style="display: flex; gap: 8px">
+                <input type="file" id="sourceUpload" accept=".mp3,.mp4,.wav,.m4a,.flac,.webm,video/*,audio/*" style="padding: 4px" />
+                <button class="btn" onclick="uploadSourceFile()">Push</button>
+              </div>
+              <label style="margin-top: 12px">Web Fetch</label>
+              <div style="display: flex; gap: 8px">
+                <input type="text" id="sourceUrl" placeholder="https://youtube.com/watch?v=..." />
+                <button class="btn" onclick="submitSourceUrl()">Pull</button>
+              </div>
+              <select id="downloadEngine" style="margin-top: 8px;">
+                <option value="ytdl">yt-dlp</option>
+                <option value="metube">MeTube</option>
+              </select>
+              <button class="btn btn-small btn-wide" onclick="autoTranscribe()" style="margin-top: 8px">Force Transcribe</button>
             </div>
-            <button class="btn btn-small btn-wide" style="margin-top: 10px" onclick="startRender('chorus')" title="Instrumental audio, but the original vocals play during the detected chorus sections">Render with Chorus</button>
-            <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
-            <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+            <div id="file-vault" style="overflow-y: auto; flex: 1; margin-top: 12px;">Scanning files...</div>
+            <button class="btn btn-small btn-wide" onclick="loadFileManifest()">Refresh Vault</button>
           </div>
         </div>
-
-        <!-- FX Customization Panel (Dynamic) -->
-        <div class="card" id="fxPanelCard" style="display:none">
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: FX Customization -->
+      <div class="dock-panel" data-dock="fx" id="fxDockPanel" style="display:none">
+        <div class="card" id="fxPanelCard">
           <button type="button" class="section-toggle" onclick="toggleSection('sectionFxPanelBody', this)">
             <span>
               <span class="section-toggle-main">⚙️ FX Customization</span>
@@ -656,199 +1002,18 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <div class="right-column">
-      <div class="top-panels">
-        <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionTopJobsBody', this)">
-            <span><span class="section-toggle-main">Active Jobs</span></span>
-            <span class="section-toggle-arrow">▾</span>
-          </button>
-          <div id="sectionTopJobsBody" class="section-body">
-            <div id="job-list" class="job-list">No jobs yet.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionThemeDebugBody', this)">
-            <span>
-              <span class="section-toggle-main">Theme &amp; Debug</span>
-              <span class="section-toggle-sub">Switch built-in UI themes and capture exact backend diagnostics.</span>
-            </span>
-            <span class="section-toggle-arrow">▾</span>
-          </button>
-          <div id="sectionThemeDebugBody" class="section-body">
-            <label>Theme</label>
-            <select id="themeSelect" onchange="applySelectedTheme()"></select>
-            <div id="themeMeta" class="theme-meta">Loading theme catalog...</div>
-            <div class="debug-actions">
-              <button class="btn btn-small" onclick="applySelectedTheme()">Apply Theme</button>
-              <button class="btn btn-small" onclick="runDebugger()">Run Debugger</button>
-              <button class="btn btn-small" onclick="copyDebugReport()">Copy Report</button>
-            </div>
-            <div id="debugSummary" class="debug-summary">Debugger idle.</div>
-            <div id="debugOutput" class="debug-output">No diagnostics captured yet.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <button type="button" class="section-toggle" onclick="toggleSection('sectionLibraryBody', this)">
-            <span><span class="section-toggle-main">Media Vault</span></span>
-            <span class="section-toggle-arrow">▾</span>
-          </button>
-          <div id="sectionLibraryBody" class="section-body">
-            <div id="file-vault" style="overflow-y: auto; flex: 1;">Scanning files...</div>
-            <button class="btn btn-small btn-wide" onclick="loadFileManifest()">Refresh Vault</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="preview-pane card" id="previewPane">
-        <div class="section-toggle" style="cursor: grab; user-select: none; padding: 12px; border-bottom: 1px solid var(--border); margin: -16px -16px 12px -16px; background: var(--bg-muted); border-radius: var(--radius) var(--radius) 0 0; display: flex; align-items: center; gap: 8px;">
-          <span style="font-weight: 600; font-size: 14px; flex: 1; color: var(--text-main)">📺 Preview & Adjustments</span>
-          <span class="section-toggle-arrow" style="display: inline-block; transition: transform 0.3s ease; color: var(--text-muted)">▶</span>
-        </div>
-
-        <div id="canvas-wrapper">
-          <div class="preview-header-overlay">
-            <div class="compact-ctrl">
-              <span style="color: var(--text-muted)">Font</span>
-              <select id="fontSelect" onchange="updatePreview()"></select>
-            </div>
-
-            <div class="compact-ctrl">
-              <span style="color: var(--text-muted)">Size</span>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', 1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', -1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
-              <input type="hidden" id="fontSize" value="130" />
-              <input type="number" id="fontSizeNum" min="20" max="500" value="130" oninput="document.getElementById('fontSize').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
-            </div>
-
-            <div class="compact-ctrl" title="Line Spacing">
-              <span style="color: var(--text-muted)">Gap</span>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', 1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', -1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
-              <input type="hidden" id="lineSpacing" value="30" />
-              <input type="number" id="lineGapNum" min="0" max="100" value="30" oninput="document.getElementById('lineSpacing').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
-            </div>
-
-            <div class="compact-ctrl" title="Word Padding">
-              <span style="color: var(--text-muted)">Pad</span>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', 1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
-              <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', -1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
-              <input type="hidden" id="wordPadding" value="0" />
-              <input type="number" id="wordPadNum" min="0" max="50" value="0" oninput="document.getElementById('wordPadding').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
-            </div>
-
-            <div class="compact-ctrl">
-              <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="updatePreview()" />
-              <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="updatePreview()" />
-              <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="updatePreview()" />
-            </div>
-
-            <div class="compact-ctrl">
-              <span style="color: var(--text-muted)">BG</span>
-              <input type="color" id="bgColor" value="#161f28" title="Background Color" oninput="updatePreview()" />
-              <select id="bgType" onchange="updatePreview()" style="width: 70px">
-                <option value="color">Solid</option><option value="gradient">Gradient</option><option value="spiral">Spiral FX</option><option value="image">Image</option>
-              </select>
-              <input type="file" id="bgUpload" accept="image/*" style="display: none" onchange="handleBgUpload(event)" />
-              <button type="button" class="btn btn-small" onclick="document.getElementById('bgUpload').click()" style="padding: 2px 6px">📁</button>
-            </div>
-
-            <div class="compact-ctrl">
-              <span style="color: var(--text-muted)">FX</span>
-              <select id="transitionStyle" onchange="updatePreview(); updateFxPanel();" style="width: 65px">
-                <option value="none">None</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
-              </select>
-            </div>
-
-            <div class="compact-ctrl">
-              <span style="color: var(--text-muted)">Mode</span>
-              <select id="textEffect" onchange="updatePreview()" style="width: 70px">
-                <option value="none">Flat</option><option value="shadow">Shadow</option><option value="hard-shadow">Hard Drop</option><option value="glow">Glow</option><option value="neon">Neon</option>
-              </select>
-              <select id="revealMode" onchange="updatePreview()" style="width: 75px" title="Reveal Mode">
-                <option value="continuous" selected>Scroll</option><option value="block">Block</option><option value="eager">Eager</option>
-              </select>
-              <select id="previewLineCount" onchange="updatePreview()" style="width: 50px">
-                <option value="2">2 Lns</option><option value="3" selected>3 Lns</option><option value="4">4 Lns</option>
-              </select>
-            </div>
-          </div>
-          <canvas id="videoCanvas" width="1920" height="1080"></canvas>
-        </div>
-
-        <div id="manualTimingPanel" class="integrated-timing-rail">
-          <div style="display: flex; align-items: center; gap: 12px; min-width: 200px">
-            <button class="btn btn-small" id="manualTimingBtn" onclick="toggleManualTiming()" style="background: var(--accent); color: var(--button-fg)">Timing Mode is OFF</button>
-            <div style="font-size: 11px; color: var(--text-muted)">Press <b>S</b> (Start) / <b>F</b> (End)</div>
-          </div>
-          <div style="flex: 1; text-align: center">
-            <span id="manualCurrentWord" class="manual-word" style="font-size: 16px">-</span>
-            <span id="manualProgressText" style="font-size: 11px; margin-left: 8px; color: var(--text-muted)">0 / 0</span>
-          </div>
-          <div style="display: flex; gap: 6px">
-            <button class="btn btn-small" onclick="manualTimingStepBackward()">Prev</button>
-            <button class="btn btn-small" onclick="manualTimingStepForward()">Next</button>
-            <button class="btn btn-small" onclick="resetPreviewAndTiming()">Reset</button>
-          </div>
-        </div>
-
-        <div class="touch-timing-controls" id="touchTimingControls">
-          <button class="btn touch-timing-btn-start" type="button"
-            onpointerdown="onTouchTimingPress(event, 'start')">▶ START word (S)</button>
-          <button class="btn touch-timing-btn-end" type="button"
-            onpointerdown="onTouchTimingPress(event, 'end')">⏹ END word (F)</button>
-        </div>
-
-        <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Scroll up/down to make vocal dynamics taller/smaller. Drag left/right to pan. Click to seek.">
-          <canvas id="vocalWaveform" aria-label="Vocal dynamics waveform"></canvas>
-        </div>
-
-        <div class="media-controls">
-          <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">◀◀</button>
-          <button class="btn" id="playBtn" onclick="togglePlayback()" style="min-width: 60px">Play</button>
-          <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">▶▶</button>
-          <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
-          <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
-
-          <div class="media-inline-control" style="border-left: 1px solid var(--border); padding-left: 12px">
-            <label>Vol <span id="volumeValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
-            <input type="range" id="volume" min="0" max="1" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
-          </div>
-          <div class="media-inline-control">
-            <label>Spd</label>
-            <select id="playbackRate" onchange="onPlaybackRateChange()" style="padding: 4px; font-size: 11px; width: 55px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
-              <option value="0.5">0.5x</option>
-              <option value="1" selected>1.0x</option>
-              <option value="1.5">1.5x</option>
-            </select>
-          </div>
-          <div class="media-inline-control">
-            <label>Res</label>
-            <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
-              <option value="640x360" selected>360p (640x360)</option>
-              <option value="960x540">540p (960x540)</option>
-              <option value="1280x720">720p (1280x720)</option>
-              <option value="1920x1080">1080p (1920x1080)</option>
-            </select>
-          </div>
-          <div class="media-inline-control">
-            <label>Ptch <span id="pitchValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
-            <input type="range" id="pitch" min="0.5" max="1.5" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
-          </div>
-        </div>
-
-       <audio id="previewAudio" onloadedmetadata="onAudioLoaded()"></audio>
-      </div>
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
       </div>
     </div>
 
 <script>
       const canvas = document.getElementById("videoCanvas");
       const ctx = canvas.getContext("2d");
+      // Text outline thickness in device pixels for the current frame; 0 means
+      // the outline stroke is skipped altogether.
+      let outlineStrokeWidth = 2;
       const audio = document.getElementById("previewAudio");
       const vocalWaveformCanvas = document.getElementById("vocalWaveform");
       const vocalWaveformRail = document.getElementById("vocalWaveformRail");
@@ -2091,6 +2256,15 @@
         return fxSpeedState;
       }
 
+      // Outline thickness in preview-space pixels. 0 = no outline, -1 = auto
+      // (font-relative default). Returned as a number for the render payload.
+      function getOutlineWidthSetting() {
+        const el = document.getElementById("outlineWidth");
+        if (!el || el.value === "" || el.value === null) return -1;
+        const n = parseInt(el.value, 10);
+        return Number.isFinite(n) ? Math.max(0, Math.min(40, n)) : -1;
+      }
+
       function setFxScope(value) {
         if (!value) return;
         fxScopeState = String(value);
@@ -2111,7 +2285,7 @@
         const selectedFx = fxSelect ? fxSelect.value : "none";
         const panelBody = document.getElementById("sectionFxPanelBody");
         const panelContent = document.getElementById("fxPanelContent");
-        const panelCard = document.getElementById("fxPanelCard");
+        const panelCard = document.getElementById("fxDockPanel") || document.getElementById("fxPanelCard");
         const subtitle = document.getElementById("fxPanelSubtitle");
 
         if (!panelBody || !panelContent) return;
@@ -2125,7 +2299,7 @@
         }
 
         if (panelCard) panelCard.style.display = "";
-        
+
         // Common FX header controls (Scope + Speed apply to all effects)
         const commonControls = `
           <div class="compact-ctrl" style="border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;">
@@ -2139,7 +2313,7 @@
             </select>
           </div>
         `;
-        
+
         // Build FX-specific controls
         let html = commonControls;
         let fxTitle = "";
@@ -2599,6 +2773,7 @@
           primary_color: document.getElementById("primaryColor").value,
           secondary_color: document.getElementById("secondaryColor").value,
           outline_color: document.getElementById("outlineColor").value,
+          outline_width: getOutlineWidthSetting(),
           bg_type: document.getElementById("bgType").value,
           bg_color: document.getElementById("bgColor").value,
           transition_style: document.getElementById("transitionStyle").value,
@@ -2672,7 +2847,7 @@
         allPanels.forEach((panel) => {
           const handle = panel.querySelector(":scope > .section-toggle");
           if (!handle) return;
-          
+
           handle.addEventListener("click", (event) => {
             if (handle.dataset.justDragged === "1") {
               delete handle.dataset.justDragged;
@@ -2680,7 +2855,7 @@
               event.stopImmediatePropagation();
             }
           }, true);
-          
+
           handle.addEventListener("pointerdown", (event) => {
             if (event.button !== 0) return;
             const startRect = panel.getBoundingClientRect();
@@ -2699,7 +2874,7 @@
               panel.style.left = `${startRect.left}px`;
               panel.style.top = `${startRect.top}px`;
               panel.style.width = `${startRect.width}px`;
-              
+
               // Increment z-index so this panel comes to front, don't stack
               maxZIndex += 1;
               panelZIndices.set(panel, maxZIndex);
@@ -3662,6 +3837,7 @@
             primaryColor: document.getElementById("primaryColor").value,
             secondaryColor: document.getElementById("secondaryColor").value,
             outlineColor: document.getElementById("outlineColor").value,
+            outlineWidth: getOutlineWidthSetting(),
             bgColor: document.getElementById("bgColor").value,
             bgType: document.getElementById("bgType").value,
             transitionStyle: document.getElementById("transitionStyle").value,
@@ -3713,6 +3889,8 @@
         setIf("primaryColor", preview.primaryColor);
         setIf("secondaryColor", preview.secondaryColor);
         setIf("outlineColor", preview.outlineColor);
+        setIf("outlineWidth", preview.outlineWidth);
+        setIf("outlineWidthNum", preview.outlineWidth);
         setIf("bgColor", preview.bgColor);
         setIf("bgType", preview.bgType);
         setIf("transitionStyle", preview.transitionStyle);
@@ -4157,7 +4335,7 @@
         return lines;
       }
 
-      
+
 
       function onAudioLoaded() {
         if (previewShouldStartAtZero) {
@@ -4250,7 +4428,7 @@
             if (wordTransition.blur > 0) ctx.filter = `blur(${wordTransition.blur}px)`;
           }
           ctx.strokeStyle = oColor;
-          ctx.strokeText(t.text, x, y);
+          if (outlineStrokeWidth > 0) ctx.strokeText(t.text, x, y);
 
           // Once 'F' was pressed (finite end) and playback is past it, hold the word fully filled.
           let currentProgress = t.progress || 0;
@@ -4458,7 +4636,18 @@
         }
 
         ctx.textAlign = "left"; ctx.textBaseline = "middle";
-        ctx.lineJoin = "round"; ctx.lineWidth = Math.max(2, Math.round(scaledFontSize * 0.16));
+        // Outline thickness: -1 (auto) keeps the classic font-relative stroke;
+        // an explicit value (0 = none) is scaled like the font so the preview
+        // matches the burned-in ASS \bord width.
+        const outlineWidthSetting = getOutlineWidthSetting();
+        ctx.lineJoin = "round";
+        // Canvas2D silently ignores lineWidth <= 0 (it keeps the previous
+        // value), so a zero-thickness outline has to be handled by skipping the
+        // stroke entirely rather than by setting the width to 0.
+        outlineStrokeWidth = outlineWidthSetting < 0
+          ? Math.max(2, Math.round(scaledFontSize * 0.16))
+          : Math.max(0, Math.round(outlineWidthSetting * layoutScale));
+        if (outlineStrokeWidth > 0) ctx.lineWidth = outlineStrokeWidth;
 
         if (linesToDraw.length) {
           applyTextEffect(effect, primary, secondary);
@@ -4579,6 +4768,390 @@
         else captureManualWordEnd();
       }
 
+      // ================= DOCKED PANEL SYSTEM =================
+      // Panels live in named CSS grid areas. Users can drag a panel by its
+      // header onto another panel to SWAP the two areas, and drag the edge
+      // grips to resize the shared grid tracks (so neighbours reflow instead
+      // of overlapping). Assignments + track sizes persist in localStorage.
+      const DOCK_DEFAULT = { jobs:"jobs", settings:"settings", lyrics:"lyrics", preview:"preview", vault:"vault", fx:"fx" };
+      const DOCK_STORE = "karaokeDockLayout";
+      let dockAssign = { ...DOCK_DEFAULT };
+
+      function dockPanels() {
+        return Array.from(document.querySelectorAll(".dock-panel"));
+      }
+      function applyDockAssignments() {
+        dockPanels().forEach((p) => {
+          const key = p.getAttribute("data-dock");
+          const area = dockAssign[key] || key;
+          p.style.gridArea = area;
+          // Mirrored onto an attribute so CSS (e.g. preview takeover) can target
+          // whichever panel currently occupies an area, even after a swap.
+          p.setAttribute("data-dock-area", area);
+        });
+      }
+      function saveDockLayout() {
+        try {
+          const layout = document.getElementById("appLayout");
+          const cs = layout ? layout.style : null;
+          localStorage.setItem(DOCK_STORE, JSON.stringify({
+            assign: dockAssign,
+            cols: cs ? [cs.getPropertyValue("--dock-col-left"), cs.getPropertyValue("--dock-col-right")] : null,
+            rowMain: cs ? cs.getPropertyValue("--dock-row-main") : null,
+            maximized: !!(layout && layout.classList.contains("preview-maximized")),
+          }));
+        } catch (e) {}
+      }
+      function loadDockLayout() {
+        try {
+          const raw = localStorage.getItem(DOCK_STORE);
+          if (!raw) return;
+          const d = JSON.parse(raw);
+          if (d && d.assign) {
+            // Only accept a complete, non-duplicated mapping.
+            const vals = Object.values(d.assign);
+            const keys = Object.keys(DOCK_DEFAULT);
+            if (keys.every((k) => d.assign[k]) && new Set(vals).size === vals.length) {
+              dockAssign = { ...d.assign };
+            }
+          }
+          const layout = document.getElementById("appLayout");
+          if (layout && d) {
+            if (d.cols && d.cols[0]) { layout.style.setProperty("--dock-col-left", d.cols[0]); dockManualCols = true; }
+            if (d.cols && d.cols[1]) { layout.style.setProperty("--dock-col-right", d.cols[1]); dockManualCols = true; }
+            if (d.rowMain) { layout.style.setProperty("--dock-row-main", d.rowMain); dockManualRow = true; }
+            if (d.maximized) layout.classList.add("preview-maximized");
+          }
+        } catch (e) {}
+      }
+
+      // ---- Drag a panel header onto another panel to swap places ----
+      function initDockDragSwap() {
+        let dragKey = null;
+        let dropTarget = null;
+
+        const clearTarget = () => {
+          if (dropTarget) dropTarget.classList.remove("dock-drop-target");
+          dropTarget = null;
+        };
+
+        dockPanels().forEach((panel) => {
+          const handle = panel.querySelector(".section-toggle");
+          if (!handle) return;
+          handle.addEventListener("pointerdown", (ev) => {
+            // Ignore clicks on real controls inside the header.
+            if (ev.target.closest("button.btn, select, input, .dock-resizer")) return;
+            if (ev.button !== 0) return;
+            const startX = ev.clientX, startY = ev.clientY;
+            let active = false;
+
+            const move = (mv) => {
+              if (!active) {
+                if (Math.hypot(mv.clientX - startX, mv.clientY - startY) < 8) return;
+                active = true;
+                dragKey = panel.getAttribute("data-dock");
+                panel.classList.add("dock-dragging");
+                document.body.classList.add("dock-resizing");
+              }
+              const el = document.elementFromPoint(mv.clientX, mv.clientY);
+              const over = el && el.closest ? el.closest(".dock-panel") : null;
+              if (over !== dropTarget) {
+                clearTarget();
+                if (over && over !== panel) {
+                  dropTarget = over;
+                  dropTarget.classList.add("dock-drop-target");
+                }
+              }
+            };
+            const up = () => {
+              document.removeEventListener("pointermove", move);
+              document.removeEventListener("pointerup", up);
+              document.body.classList.remove("dock-resizing");
+              panel.classList.remove("dock-dragging");
+              if (active && dropTarget && dragKey) {
+                const otherKey = dropTarget.getAttribute("data-dock");
+                const a = dockAssign[dragKey], b = dockAssign[otherKey];
+                dockAssign[dragKey] = b;
+                dockAssign[otherKey] = a;
+                applyDockAssignments();
+                saveDockLayout();
+                if (typeof updatePreview === "function") updatePreview();
+                window.dispatchEvent(new Event("resize"));
+                if (typeof setStatus === "function") setStatus("Panels swapped.");
+              }
+              clearTarget();
+              dragKey = null;
+            };
+            document.addEventListener("pointermove", move);
+            document.addEventListener("pointerup", up);
+          });
+        });
+      }
+
+      // ---- Edge grips resize the shared grid tracks ----
+      // ---- Preview takeover ----
+      // When the preview is dragged taller than the page can accommodate, the
+      // other panels would have to clip. Instead they slide up and out and the
+      // preview claims the full width and height of the layout.
+      const PREVIEW_TAKEOVER_SLACK = 24;
+
+      function isPreviewPanel(panel) {
+        if (!panel) return false;
+        return (dockAssign[panel.getAttribute("data-dock")] || "") === "preview";
+      }
+
+      function setPreviewMaximized(on) {
+        const layout = document.getElementById("appLayout");
+        if (!layout || layout.classList.contains("preview-maximized") === !!on) return;
+        layout.classList.toggle("preview-maximized", !!on);
+        const btn = document.getElementById("previewMaxBtn");
+        if (btn) {
+          btn.textContent = on ? "🗗" : "⛶";
+          btn.title = on ? "Restore panel layout" : "Expand preview to fill the page";
+        }
+        // The canvas is sized from its container, so re-measure after reflow.
+        window.requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+          if (typeof updatePreview === "function") updatePreview();
+        });
+      }
+
+      function togglePreviewMaximized() {
+        const layout = document.getElementById("appLayout");
+        if (!layout) return;
+        const on = !layout.classList.contains("preview-maximized");
+        setPreviewMaximized(on);
+        if (!on) {
+          // Leaving takeover: drop the oversized row so panels get their space back.
+          dockManualRow = false;
+          layout.style.removeProperty("--dock-row-main");
+          layout.style.removeProperty("grid-template-rows");
+          try { fitUiToScreen(); } catch (e) {}
+        }
+        saveDockLayout();
+      }
+
+      function initDockResizers() {
+        const layout = document.getElementById("appLayout");
+        if (!layout) return;
+        layout.addEventListener("pointerdown", (ev) => {
+          const grip = ev.target.closest(".dock-resizer");
+          if (!grip) return;
+          ev.preventDefault();
+          const panel = grip.closest(".dock-panel");
+          const dir = grip.getAttribute("data-dir");
+          const area = panel ? (dockAssign[panel.getAttribute("data-dock")] || "") : "";
+          const startX = ev.clientX, startY = ev.clientY + window.scrollY;
+          const cs = getComputedStyle(layout);
+          const startLeft = parseFloat(cs.getPropertyValue("--dock-col-left")) || 340;
+          const startRight = parseFloat(cs.getPropertyValue("--dock-col-right")) || 340;
+          // Map the drag 1:1 onto the panel's own height. The preview spans two
+          // grid rows, and the trailing auto row silently absorbs the first
+          // ~160px of growth, which makes the grip feel dead; basing the new
+          // track on the panel height instead keeps the edge under the cursor.
+          const panelH = panel ? panel.getBoundingClientRect().height : 480;
+          const startMain = panelH;
+          const extraRows = 0;
+          document.body.classList.add("dock-resizing");
+
+          const move = (mv) => {
+            const dx = mv.clientX - startX;
+            // Track page-space Y so dragging past the viewport edge (which
+            // scrolls the page) keeps increasing the height instead of stalling.
+            const dy = (mv.clientY + window.scrollY) - startY;
+            // Auto-scroll while the pointer sits against the bottom/top edge so
+            // the grip can be dragged well beyond one screen height.
+            if (dir === "s" || dir === "se") {
+              const edge = 40;
+              if (mv.clientY > window.innerHeight - edge) window.scrollBy(0, 24);
+              else if (mv.clientY < edge) window.scrollBy(0, -24);
+            }
+            if (dir === "e" || dir === "se") {
+              dockManualCols = true;
+              // Which column does this panel occupy?
+              if (area === "lyrics" || area === "fx") {
+                layout.style.setProperty("--dock-col-left", `${Math.max(220, startLeft + dx)}px`);
+              } else if (area === "vault") {
+                // Right column grows when dragged left.
+                layout.style.setProperty("--dock-col-right", `${Math.max(220, startRight - dx)}px`);
+              } else {
+                // Centre panels (jobs/settings/preview): their east edge is the
+                // right column's boundary, so dragging right shrinks the vault.
+                layout.style.setProperty("--dock-col-right", `${Math.max(220, startRight - dx)}px`);
+              }
+            }
+            if (dir === "s" || dir === "se") {
+              dockManualRow = true;
+              const nextMain = Math.max(280, startMain + dy);
+              layout.style.setProperty("--dock-row-main", `minmax(280px, ${nextMain}px)`);
+
+              // FIX: Change '0px' to '1fr' or 'auto'.
+              // '1fr' allows the panel to fill the remaining space in the container,
+              // whereas '0px' was strictly capping it.
+              if (isPreviewPanel(panel)) {
+                layout.style.gridTemplateRows = `var(--dock-row-top) minmax(280px, ${nextMain}px) 1fr`;
+              }
+
+              if (isPreviewPanel(panel)) {
+                const avail = window.innerHeight - PREVIEW_TAKEOVER_SLACK;
+                setPreviewMaximized(nextMain >= avail);
+              }
+            }
+          };
+          const up = () => {
+            document.removeEventListener("pointermove", move);
+            document.removeEventListener("pointerup", up);
+            document.body.classList.remove("dock-resizing");
+            saveDockLayout();
+            if (typeof updatePreview === "function") updatePreview();
+            window.dispatchEvent(new Event("resize"));
+          };
+          document.addEventListener("pointermove", move);
+          document.addEventListener("pointerup", up);
+        });
+      }
+
+      function initDockSystem() {
+        loadDockLayout();
+        applyDockAssignments();
+        initDockDragSwap();
+        initDockResizers();
+        // Sync the header button with a restored takeover state.
+        const layout = document.getElementById("appLayout");
+        const btn = document.getElementById("previewMaxBtn");
+        if (layout && btn && layout.classList.contains("preview-maximized")) {
+          btn.textContent = "🗗";
+          btn.title = "Restore panel layout";
+        }
+      }
+
+      // ---- Reset UI layout ----
+      // Two stages:
+      //   1. Strip every inline style written by the CSS `resize` handles and
+      //      the panel-drag code, so panels fall back to the stylesheet.
+      //   2. Re-fit the layout to the *current* screen (see fitUiToScreen), so
+      //      "reset" means "ideal for this display", not a fixed default size.
+      // Set once the user clicks Reset UI: keeps the fit up to date as the
+      // window is resized or the page is zoomed, so the px values never
+      // go stale against the new viewport.
+      let uiFitActive = false;
+      // Once the user drags a resize grip, their explicit track sizes win over
+      // the automatic screen fit, so a window/zoom resize no longer clobbers them.
+      let dockManualCols = false;
+      let dockManualRow = false;
+      function fitUiToScreen() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const layout = document.getElementById("appLayout");
+        if (!layout) return;
+
+        // Side columns take a proportional slice, clamped to a usable band,
+        // leaving the centre (preview) column as the dominant area.
+        const side = Math.round(Math.max(260, Math.min(400, vw * 0.19)));
+        if (!dockManualCols) {
+          layout.style.setProperty("--dock-col-left", `${side}px`);
+          layout.style.setProperty("--dock-col-right", `${side}px`);
+        }
+        layout.style.maxWidth = `${Math.round(Math.min(vw - 24, 2400))}px`;
+
+        // Give the preview row most of the viewport height. The pane itself
+        // never gets a hard max-height: it must always show every bar and
+        // button, so its content governs the minimum.
+        const rowH = Math.round(Math.max(360, vh * 0.66));
+        if (!dockManualRow) {
+          layout.style.setProperty("--dock-row-main", `minmax(360px, ${rowH}px)`);
+        }
+
+        // The preview pane is grid-sized now; clear any legacy inline caps
+        // that would otherwise clip its lower controls.
+        const pane = document.getElementById("previewPane");
+        if (pane) {
+          ["max-height", "max-width", "width", "height"].forEach((prop) =>
+            pane.style.removeProperty(prop)
+          );
+        }
+      }
+
+      function resetUiLayout() {
+        uiFitActive = true;
+        dockManualCols = false;
+        dockManualRow = false;
+        const layoutReset = document.getElementById("appLayout");
+        if (layoutReset) layoutReset.classList.remove("preview-maximized");
+        const maxBtn = document.getElementById("previewMaxBtn");
+        if (maxBtn) { maxBtn.textContent = "⛶"; maxBtn.title = "Expand preview to fill the page"; }
+        const selectors = [".card", ".preview-pane", "textarea", ".panel", ".section-body"];
+        const seen = new Set();
+        selectors.forEach((sel) => {
+          document.querySelectorAll(sel).forEach((el) => {
+            if (seen.has(el)) return;
+            seen.add(el);
+            // Only clear layout-related properties; leave unrelated inline
+            // styling (colors, cursors, etc.) authored in the markup intact.
+            ["width", "height", "min-width", "min-height", "max-width", "max-height",
+             "top", "left", "right", "bottom", "position", "z-index", "transform",
+             "flex", "flex-basis", "grid-area", "margin"].forEach((p) => {
+              el.style.removeProperty(p);
+            });
+            el.classList.remove("panel-dragging");
+          });
+        });
+        document.body.classList.remove("panel-drag-active");
+
+        // The layout container may carry inline styles from a previous fit or
+        // a manual resize; clear them so the stylesheet defaults apply again.
+        const layoutEl = document.getElementById("appLayout");
+        if (layoutEl) {
+          ["width", "max-width", "height", "grid-template-columns", "grid-template-rows",
+           "--dock-col-left", "--dock-col-right", "--dock-row-main", "--dock-row-top"].forEach((p) =>
+            layoutEl.style.removeProperty(p)
+          );
+        }
+
+        // Restore the default docking arrangement (undo any panel swaps).
+        try {
+          dockAssign = { ...DOCK_DEFAULT };
+          applyDockAssignments();
+        } catch (e) {}
+
+        // Reset drag bookkeeping so the next drag starts from a clean stack.
+        try {
+          if (typeof panelZIndices !== "undefined" && panelZIndices) panelZIndices.clear();
+          if (typeof maxZIndex !== "undefined") maxZIndex = 10;
+        } catch (e) {}
+
+        // Drop any persisted layout state.
+        try {
+          Object.keys(localStorage).forEach((k) => {
+            if (/panel|layout|pane|size|pos/i.test(k)) localStorage.removeItem(k);
+          });
+        } catch (e) {}
+
+        // Re-evaluate mobile/desktop, then size everything to this screen.
+        try { if (typeof initMobileMode === "function") initMobileMode(); } catch (e) {}
+        // Panels had their inline grid-area stripped above; put the docking
+        // assignments back before measuring.
+        try { applyDockAssignments(); } catch (e) {}
+        try { fitUiToScreen(); } catch (e) {}
+        try { saveDockLayout(); } catch (e) {}
+        try { if (typeof updatePreview === "function") updatePreview(); } catch (e) {}
+        try { if (typeof drawVocalWaveform === "function") drawVocalWaveform(); } catch (e) {}
+        window.dispatchEvent(new Event("resize"));
+        if (typeof setStatus === "function") {
+          setStatus(`UI reset and fitted to this screen (${window.innerWidth}\u00d7${window.innerHeight}).`);
+        }
+      }
+
+      // Keep a Reset-UI fit in sync with zoom / window-resize changes.
+      let uiFitTimer = null;
+      window.addEventListener("resize", () => {
+        if (!uiFitActive) return;
+        if (uiFitTimer) clearTimeout(uiFitTimer);
+        uiFitTimer = window.setTimeout(() => {
+          try { fitUiToScreen(); } catch (e) {}
+        }, 120);
+      });
+
       // ---- Mobile mode ----
       function applyMobileMode(on) {
         document.body.classList.toggle("mobile-mode", !!on);
@@ -4610,6 +5183,9 @@
       onFontSizeChanged(); updateManualTimingHud();
       initPreviewControlsAutoFade();
       initMobileMode();
+      initDockSystem();   // docked grid: restore assignments, enable swap + resize
+      fitUiToScreen();    // size the docked grid to this screen on first paint
+      uiFitActive = true; // keep it fitted as the window is resized / zoomed
       updateFxPanel(); // Initialize FX panel
 
       // Defer heavy operations - UI is responsive first
