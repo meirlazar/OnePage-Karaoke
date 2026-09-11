@@ -1806,6 +1806,15 @@ def _run_render_job(
     ball_color: str = "#ffffff",
     ball_outline_color: str = "#000000",
     outline_width: int = -1,
+    male_primary_color: str = "",
+    male_secondary_color: str = "",
+    male_outline_color: str = "",
+    female_primary_color: str = "",
+    female_secondary_color: str = "",
+    female_outline_color: str = "",
+    both_primary_color: str = "",
+    both_secondary_color: str = "",
+    both_outline_color: str = "",
 ) -> None:
     # NOTE: "bouncing-ball" is rendered through the standard FFmpeg/ASS path
     # below (see _build_bouncing_ball_events), which correctly honors
@@ -1870,6 +1879,15 @@ def _run_render_job(
                 ball_color=ball_color,
                 ball_outline_color=ball_outline_color,
                 outline_width=outline_width,
+                male_primary_color=male_primary_color,
+                male_secondary_color=male_secondary_color,
+                male_outline_color=male_outline_color,
+                female_primary_color=female_primary_color,
+                female_secondary_color=female_secondary_color,
+                female_outline_color=female_outline_color,
+                both_primary_color=both_primary_color,
+                both_secondary_color=both_secondary_color,
+                both_outline_color=both_outline_color,
             )
             _update_job(job_id, render_device=actual_device)
             logger.info(
@@ -3120,7 +3138,10 @@ def _detect_lrc_chorus_ranges(
             + int(match.group(2))
             + int((match.group(3) or "0").ljust(3, "0")[:3]) / 1000
         )
-        text = _WORD_END_TAG_RE.sub("", tag_regex.sub("", stripped)).strip()
+        text = _WORD_END_TAG_RE.sub("", tag_regex.sub("", stripped))
+        # Drop duet-voice markers ({m}/{f}/{b}) so they don't pollute the
+        # repeated-line comparison used to auto-detect chorus sections.
+        text = re.sub(r"\{[mfb]\}", "", text).strip()
         if text:
             parsed.append((time_sec, text))
 
@@ -4222,6 +4243,15 @@ def lrc_to_ass(
     ball_color: str = "",
     ball_outline_color: str = "",
     outline_width: int = -1,
+    male_primary_hex: str = "",
+    male_secondary_hex: str = "",
+    male_outline_hex: str = "",
+    female_primary_hex: str = "",
+    female_secondary_hex: str = "",
+    female_outline_hex: str = "",
+    both_primary_hex: str = "",
+    both_secondary_hex: str = "",
+    both_outline_hex: str = "",
 ):
     """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering."""
 
@@ -4235,6 +4265,53 @@ def lrc_to_ass(
     p_color = to_ass_color(primary_hex)
     s_color = to_ass_color(secondary_hex)
     o_color = to_ass_color(outline_hex)
+
+    # Duet voice (Male/Female) color overrides. Empty values fall back to the
+    # default scheme so ungendered lines are untouched.
+    def _gender_scheme(prim: str, sec: str, out: str) -> dict | None:
+        if not (prim or sec or out):
+            return None
+        return {
+            "1c": _ass_override_color(prim or primary_hex),
+            "2c": _ass_override_color(sec or secondary_hex),
+            "3c": _ass_override_color(out or outline_hex),
+        }
+
+    gender_schemes = {
+        "m": _gender_scheme(male_primary_hex, male_secondary_hex, male_outline_hex),
+        "f": _gender_scheme(female_primary_hex, female_secondary_hex, female_outline_hex),
+        "b": _gender_scheme(both_primary_hex, both_secondary_hex, both_outline_hex),
+    }
+
+    # Recomputed after parsing once we know whether any line assigns a voice.
+    any_gender = False
+    default_fill_tag = (
+        rf"\1c{_ass_override_color(primary_hex)}"
+        rf"\2c{_ass_override_color(secondary_hex)}"
+        rf"\3c{_ass_override_color(outline_hex)}"
+    )
+    default_preview_tag = (
+        rf"\1c{_ass_override_color(secondary_hex)}\3c{_ass_override_color(outline_hex)}"
+    )
+
+    def _gender_fill_tag(gender: str | None) -> str:
+        # Full override (fill + karaoke pre-fill + outline) for a sung word.
+        if not any_gender:
+            return ""
+        scheme = gender_schemes.get(gender) if gender else None
+        if not scheme:
+            return default_fill_tag
+        return rf"\1c{scheme['1c']}\2c{scheme['2c']}\3c{scheme['3c']}"
+
+    def _gender_preview_tag(gender: str | None) -> str:
+        # Upcoming (unsung) lines render in the secondary hue; tint per voice.
+        if not any_gender:
+            return ""
+        scheme = gender_schemes.get(gender) if gender else None
+        if not scheme:
+            return default_preview_tag
+        return rf"\1c{scheme['2c']}\3c{scheme['3c']}"
+
     main_margin_v = 0
     next_margin_v = 0
     font_name = _resolve_render_font_family(requested_font_name)
@@ -4297,6 +4374,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
     # trailing <mm:ss(.xx)> word-end tag that lets a word finish and hold during a pause.
     line_tag_re = re.compile(r"\[(\d+):(\d+)(?:\.(\d{1,3}))?\]")
     end_tag_re = re.compile(r"<(\d+):(\d+)(?:\.(\d{1,3}))?>")
+    gender_mark_re = re.compile(r"\{([mfb])\}")
 
     def _tag_seconds(match) -> float:
         return (
@@ -4308,6 +4386,11 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
     segments = []
     break_before = False
     for line in lines:
+        # Capture the duet voice for this line, then strip the {m}/{f} marker so it
+        # never renders as lyric text.
+        gender_match = gender_mark_re.search(line)
+        line_gender = gender_match.group(1) if gender_match else None
+        line = gender_mark_re.sub("", line)
         stripped = line.strip()
         if not stripped:
             break_before = bool(segments)
@@ -4348,6 +4431,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                         "end": end_val,
                         "text": full_text,
                         "break_before": break_before,
+                        "gender": line_gender,
                     }
                 )
                 break_before = False
@@ -4360,6 +4444,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                         "end": piece["end"],
                         "text": piece["text"],
                         "break_before": break_before and i == 0,
+                        "gender": line_gender,
                     }
                 )
             break_before = False
@@ -4435,8 +4520,13 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                     "is_lrc_start": word_index == 0,
                     "break_before": bool(segment.get("break_before"))
                     and word_index == 0,
+                    "gender": segment.get("gender"),
                 }
             )
+
+    # Only take the per-word color path when the lyrics actually assign a voice;
+    # otherwise keep the default (byte-identical) output for non-duet songs.
+    any_gender = any(t.get("gender") for t in tokens)
 
     display_lines = []
     current = []
@@ -4533,6 +4623,13 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
         timed = _resolve_word_timings(entry, line_end)
         if not timed:
             return entry.get("text", "")
+        entry_words = entry.get("words") if entry.get("kind") == "words" else None
+
+        def _word_color(idx: int) -> str:
+            if entry_words and 0 <= idx < len(entry_words):
+                return _gender_fill_tag(entry_words[idx].get("gender"))
+            return _gender_fill_tag(None)
+
         # Reserve the reading lead-in before the first visible word so karaoke filling still
         # begins at the original lyric timestamp rather than when the line enters the screen.
         lead_tag = (
@@ -4547,7 +4644,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                 if word_fx_style
                 else ""
             )
-            return lead_tag + r"{\kf" + str(fill_cs) + fx_tag + "}" + word
+            return lead_tag + r"{" + _word_color(0) + r"\kf" + str(fill_cs) + fx_tag + "}" + word
         parts = [lead_tag] if lead_tag else []
         prev_end = line_start
         for idx, (word, start, end) in enumerate(timed):
@@ -4564,9 +4661,23 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                 if word_fx_style
                 else ""
             )
-            parts.append(r"{\kf" + str(fill_cs) + fx_tag + "}" + word)
+            parts.append(r"{" + _word_color(idx) + r"\kf" + str(fill_cs) + fx_tag + "}" + word)
             prev_end = end
         return "".join(parts)
+
+    def _upcoming_payload(entry) -> str:
+        # Upcoming preview lines are plain (unsung) text; tint each word by its
+        # duet voice so the reader can tell who sings next.
+        if not any_gender or entry.get("kind") != "words":
+            return entry["text"]
+        words = entry.get("words") or []
+        parts = []
+        for idx, item in enumerate(words):
+            prefix = " " if idx > 0 else ""
+            parts.append(
+                "{" + _gender_preview_tag(item.get("gender")) + "}" + prefix + item["word"]
+            )
+        return "".join(parts) or entry["text"]
 
     # Generate ASS event blocks with transition/mode controls mapped from preview settings.
     speed_ms = max(80, min(1800, int(float(fx_speed or 0.6) * 1000)))
@@ -4708,7 +4819,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
             for offset in range(1, upcoming_count + 1):
                 if i + offset >= n:
                     break
-                next_text = display_lines[i + offset]["text"]
+                next_text = _upcoming_payload(display_lines[i + offset])
                 next_y = top_y + (offset * line_height)
                 events.append(
                     f"Dialogue: 1,{start_str},{end_str},Upcoming,,0,0,0,,{{\\an5\\pos({center_x},{next_y})}}{next_text}"
@@ -4756,6 +4867,15 @@ def execute_ffmpeg_burn(
     ball_color: str = "",
     ball_outline_color: str = "",
     outline_width: int = -1,
+    male_primary_color: str = "",
+    male_secondary_color: str = "",
+    male_outline_color: str = "",
+    female_primary_color: str = "",
+    female_secondary_color: str = "",
+    female_outline_color: str = "",
+    both_primary_color: str = "",
+    both_secondary_color: str = "",
+    both_outline_color: str = "",
 ):
     """Render a karaoke video at the requested resolution using NVENC when available."""
     audio_path = _resolve_output_file(audio_filename)
@@ -4807,14 +4927,16 @@ def execute_ffmpeg_burn(
         _ensure_residual_instrumental(project_dir, audio_path, base_name)
     render_audio_path = audio_path
     if normalized_source == "chorus":
-        # Rebuild the chorus stem now so it always reflects the user's current
-        # +chorus / -chorus word selections rather than a stale cached mix.
+        # Always rebuild the chorus stem at render time so it reflects the current
+        # lyrics. _build_chorus_aware_track uses the user's manual +chorus/-chorus
+        # words when present, and otherwise falls back to the repeated-block
+        # auto-detection algorithm to pick default chorus sections.
         no_vocals_source = None
         if minus_track.exists() and minus_track.is_file():
             no_vocals_source = minus_track
         elif demucs_no_vocals and demucs_no_vocals.exists():
             no_vocals_source = demucs_no_vocals
-        if no_vocals_source and _parse_manual_chorus_ranges(lrc_path):
+        if no_vocals_source:
             try:
                 _build_chorus_aware_track(
                     job_id or "", audio_path, no_vocals_source, lrc_path, chorus_track
@@ -4865,6 +4987,15 @@ def execute_ffmpeg_burn(
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
         outline_width=outline_width,
+        male_primary_hex=male_primary_color,
+        male_secondary_hex=male_secondary_color,
+        male_outline_hex=male_outline_color,
+        female_primary_hex=female_primary_color,
+        female_secondary_hex=female_secondary_color,
+        female_outline_hex=female_outline_color,
+        both_primary_hex=both_primary_color,
+        both_secondary_hex=both_secondary_color,
+        both_outline_hex=both_outline_color,
     )
 
     # 2. Build FFmpeg command stack targeting GTX 1070 NVENC cores
@@ -4993,6 +5124,15 @@ def burn_video(
     ball_color: str = Form("#ffffff"),
     ball_outline_color: str = Form("#000000"),
     outline_width: int = Form(-1),
+    male_primary_color: str = Form("#59b0ff"),
+    male_secondary_color: str = Form("#2b6cb0"),
+    male_outline_color: str = Form("#08213a"),
+    female_primary_color: str = Form("#ff7ec8"),
+    female_secondary_color: str = Form("#b83d86"),
+    female_outline_color: str = Form("#3a0824"),
+    both_primary_color: str = Form("#ff4d4d"),
+    both_secondary_color: str = Form("#8b1a1a"),
+    both_outline_color: str = Form("#2a0606"),
 ):
     rel_audio = audio_filename
     try:
@@ -5069,6 +5209,15 @@ def burn_video(
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
         outline_width=outline_width,
+        male_primary_color=male_primary_color,
+        male_secondary_color=male_secondary_color,
+        male_outline_color=male_outline_color,
+        female_primary_color=female_primary_color,
+        female_secondary_color=female_secondary_color,
+        female_outline_color=female_outline_color,
+        both_primary_color=both_primary_color,
+        both_secondary_color=both_secondary_color,
+        both_outline_color=both_outline_color,
         details=(
             f"Resolution: {render_resolution}; Source: {rel_audio}; Output: {output_filename}; "
             f"Render device: {render_device}; Pitch: {pitch}; Volume: {volume}; "

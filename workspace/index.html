@@ -319,8 +319,11 @@
       }
       /* Chorus marking: a mirrored overlay sits behind a transparent-text
          textarea so marked words can render bold (a textarea cannot style
-         individual words itself). Every font/box property below MUST stay in
-         sync with the textarea rules above or the text will drift apart. */
+         individual words itself). Every font/box/wrapping property below MUST
+         stay in sync with the textarea rules or the colored lines drift apart.
+         Highlight styles therefore must NOT change glyph metrics (no real bold,
+         italic, or font-size changes) — those alter wrapping and misalign the
+         overlay from the text the user actually selected. */
       .lyrics-editor-wrap { position: relative; }
       .lyrics-editor-wrap textarea {
         position: relative;
@@ -328,6 +331,14 @@
         color: transparent;
         caret-color: var(--control-fg);
         z-index: 1;
+        line-height: 18px;
+        letter-spacing: normal;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: normal;
+        tab-size: 4;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
       }
       .lyrics-editor-wrap textarea::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
       .lyrics-overlay {
@@ -340,18 +351,37 @@
         color: var(--control-fg);
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 12px;
-        line-height: normal;
+        line-height: 18px;
+        letter-spacing: normal;
         white-space: pre-wrap;
         overflow-wrap: break-word;
-        overflow: hidden;
+        word-break: normal;
+        tab-size: 4;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
         box-sizing: border-box;
         pointer-events: none;
         z-index: 0;
       }
+      /* Emphasis is faux-bold (text-shadow) so advance widths — and therefore
+         wrapping — stay identical to the plain textarea. */
       .lyrics-overlay .chorus-on {
-        font-weight: 700;
         color: var(--accent);
+        text-shadow: 0.5px 0 0 currentColor;
       }
+      .lyrics-overlay .gender-m { color: #4169e1; }
+      .lyrics-overlay .gender-f { color: #ff1493; }
+      .lyrics-overlay .gender-b { color: #32cd32 ; }
+      .lyrics-overlay .chorus-on.gender-m { color: #1e90ff; }
+      .lyrics-overlay .chorus-on.gender-f { color: #ff1493; }
+      .lyrics-overlay .chorus-on.gender-b { color: #32cd32; }
+      .gender-btn-male { border-color: #4169e1 !important; }
+      .gender-btn-female { border-color: #ff00ff !important; }
+      .gender-btn-both { border-color: #32cd32 !important; }
+      .gender-btn-none { border-color: var(--text-muted) !important; }
+      .color-gender-toggle.color-gender-m { color: #4169e1; }
+      .color-gender-toggle.color-gender-f { color: #ff1493; }
+      .color-gender-toggle.color-gender-b { color: #32cd32; }
       .section-toggle {
         width: 100%;
         display: flex;
@@ -580,7 +610,22 @@
       @media (max-width: 900px) {
         .render-actions { grid-template-columns: 1fr; }
       }
+      .arrow{ position:relative;  width:100%;  height: 100%; color: red; cursor:pointer; transition:0.5s; overflow:hidden; }
+      .arrow:hover{ animation:borderAni 5s cubic-bezier(0, 0.6, 1, 0.4); border-radius:50%; }
+      .arrow:after{ position:absolute;  display:block;  content:""; width: 100pct;  height: 100pct;  top:-1px; border-bottom:solid 2px; border-color:black ; transform:translatex(4px); }
+      .arrow:before{ position:absolute; display:block; content:""; color:red; width: 100pct; height: 100%; border-top:solid 2px; border-left:solid 2px; top:50%; left:2px; transform-origin:0% 0%; transform:rotatez(-45deg); }
+      .arrow:hover:before{ animation: aniArrow01 1s cubic-bezier(0, 0.6, 1, 0.4) infinite 0.2s; }
+      .arrow:hover:after{ animation: aniArrow02 1s cubic-bezier(0, 0.6, 1, 0.4) infinite 0.2s; }
 
+      @keyframes aniArrow01 {  0% {  transform:rotatez(-45deg) translateY(30px) translateX(30px); }
+      100% { transform: rotatez(-45deg) translateY(-35px) translateX(-35px);  }
+      }
+      @keyframes aniArrow02 { 0% { transform:translateX(45px); }
+      100% { transform:translateX(-44px); }
+      }
+      @keyframes borderAni{  0% { border:solid 2px orange; }
+      100% { border:solid 3px red;  border-radius:50%; }
+      }
       /* ---- Touch timing controls (tap Start/End on a phone/tablet) ---- */
       .touch-timing-controls { display: none; gap: 10px; padding: 10px 16px; background: var(--bg-surface); border-top: 1px solid var(--border); }
       .touch-timing-controls .btn { flex: 1; padding: 16px 12px; font-size: 16px; font-weight: 800; letter-spacing: 0.04em; border-radius: 8px; touch-action: manipulation; user-select: none; }
@@ -743,10 +788,17 @@
               <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()" onscroll="syncChorusOverlayScroll()"></textarea>
             </div>
             <div class="row2" style="margin-top: 8px;">
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to vocalize them in the chorus render. Marked words appear bold.">+ Chorus</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(false)" title="Highlight words in the editor, then click to remove them from the chorus vocals.">− Chorus</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to vocalize them in the chorus render. Marked words appear bold.">Add Chorus {*}</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(false)" title="Highlight words in the editor, then click to remove them from the chorus vocals.">Remove Chorus</button>
             </div>
             <div id="chorusMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No words marked for chorus vocals (auto-detect will be used).</div>
+            <div style="display:flex; gap:6px; margin-top:8px;">
+              <button class="btn btn-small gender-btn-male" style="margin-top:0; flex:1" onclick="markSelectionGender('m')" title="Highlight lines in the editor, then click to assign them to the Male voice.">♂ Male {m}</button>
+              <button class="btn btn-small gender-btn-female" style="margin-top:0; flex:1" onclick="markSelectionGender('f')" title="Highlight lines in the editor, then click to assign them to the Female voice.">♀ Female {f}</button>
+              <button class="btn btn-small gender-btn-both" style="margin-top:0; flex:1" onclick="markSelectionGender('b')" title="Highlight lines in the editor, then click to assign them to Both voices.">⚥ Both {b}</button>
+              <button class="btn btn-small gender-btn-none" style="margin-top:0; flex:1" onclick="markSelectionGender(null)" title="Highlight lines in the editor, then click to remove any voice assignment.">✕ None</button>
+            </div>
+            <div id="genderMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No lines assigned a duet voice.</div>
             <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted); text-align:center;">Edits save automatically. Timing-mode adjustments update these lyrics live.</div>
             <div class="row2" style="margin-top: 10px;">
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
@@ -769,12 +821,12 @@
               <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
             </div>
             <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
-              <button class="btn btn-small" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
+              <button class="arrow aniArrow01" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
               <div style="min-width:0; text-align:center;">
                 <div style="font-size:10px; color:var(--text-muted);">Lyrics Revisions (auto-loaded)</div>
                 <div id="lyricsRevisionMeta" style="min-height:40px; margin-top:4px; font-size:9px; color:var(--text-muted); overflow:hidden; line-height:1.3;" aria-live="polite">Revision -</div>
               </div>
-              <button class="btn btn-small" onclick="stepLyricsRevision(1)" title="Next lyrics version">▶</button>
+              <button class="arrow aniArrow02" onclick="stepLyricsRevision(1)" title="Next lyrics version">▶</button>
             </div>
           </div>
         </div>
@@ -824,9 +876,10 @@
               </div>
 
               <div class="compact-ctrl">
-                <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="updatePreview()" />
-                <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="updatePreview()" />
-                <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="updatePreview()" />
+                <button class="step-btn color-gender-toggle" id="colorGenderToggle" type="button" title="Editing Male / default colors — click to switch voice" onclick="cycleColorGender()" style="min-width: 26px; font-size: 14px;">♂</button>
+                <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="onGenderColorInput()" />
+                <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="onGenderColorInput()" />
+                <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="onGenderColorInput()" />
                 <button class="step-btn" type="button" title="Thicker outline" onpointerdown="startControlStep('outlineWidth', 1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
                 <button class="step-btn" type="button" title="Thinner outline (0 = none)" onpointerdown="startControlStep('outlineWidth', -1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
                 <input type="hidden" id="outlineWidth" value="12" />
@@ -915,10 +968,13 @@
             <div class="media-inline-control">
               <label>Res</label>
               <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+               <option value="426x240">240p (426x240)</option>
                 <option value="640x360" selected>360p (640x360)</option>
+                <option value="854x480)">480p (854x480))</option>
                 <option value="960x540">540p (960x540)</option>
                 <option value="1280x720">720p (1280x720)</option>
                 <option value="1920x1080">1080p (1920x1080)</option>
+                <option value="2560x1440">1440p (2560x1440)</option>
               </select>
             </div>
             <div class="media-inline-control">
@@ -1808,7 +1864,7 @@
         manualTimingState.entries = [];
         manualTimingState.cursor = 0;
         manualTimingState.activeStart = null;
-        manualTimingState.previewFromAppliedLyrics = true;
+        manualTimingState.previewFromAppliedLyrics = false;
         manualTimingState.revisionIndex = null;
         parseLrcData(untimedContent);
         persistManualTiming();
@@ -1983,15 +2039,22 @@
         const editor = document.getElementById("lyricsEditor");
         const overlay = document.getElementById("lyricsChorusOverlay");
         if (!editor || !overlay) return;
-        const html = (editor.value || "").split("\n").map((line) =>
-          isLineChorusMarked(line)
-            ? `<span class="chorus-on">${escapeHtml(line)}</span>`
-            : escapeHtml(line)
-        ).join("\n");
+        const html = (editor.value || "").split("\n").map((line) => {
+          const classes = [];
+          if (isLineChorusMarked(line)) classes.push("chorus-on");
+          const gender = getLineGender(line);
+          if (gender === "m") classes.push("gender-m");
+          else if (gender === "f") classes.push("gender-f");
+          else if (gender === "b") classes.push("gender-b");
+          return classes.length
+            ? `<span class="${classes.join(" ")}">${escapeHtml(line)}</span>`
+            : escapeHtml(line);
+        }).join("\n");
         // Trailing newline needs a filler so the last line stays scrollable.
         overlay.innerHTML = html + "\n";
         syncChorusOverlayScroll();
         updateChorusMarkInfo();
+        updateGenderMarkInfo();
       }
 
       function syncChorusOverlayScroll() {
@@ -2060,6 +2123,156 @@
           setStatus(`${marked ? "Added" : "Removed"} ${changed} word${changed === 1 ? "" : "s"} ${marked ? "to" : "from"} the chorus vocals. Render with Chorus to hear it.`);
         } catch (err) {
           setStatus(`Failed to update chorus marks: ${err}`, true);
+        }
+      }
+
+      // ================================================================
+      // SECTION: Duet Voice (Male/Female) Line Marking
+      // Purpose: Let the user color whole lyric lines with a Male (blue) or
+      //          Female (pink) scheme for duets. Stored inline in the LRC as a
+      //          {m}/{f} marker right after the timestamp so it survives saves,
+      //          drives the preview canvas, and burns into the ASS render.
+      // ================================================================
+
+      // Group1: optional leading whitespace + optional timestamp + optional chorus star.
+      // Group2: optional gender token. Group3: the remaining lyric text.
+      const GENDER_LINE_RE = /^(\s*(?:\[\d+:\d+(?:\.\d{1,3})?\])?\*?)(\{[mfb]\})?(.*)$/;
+
+      function getLineGender(line) {
+        const m = String(line).match(GENDER_LINE_RE);
+        return m && m[2] ? m[2][1] : null;
+      }
+
+      function setLineGenderMark(line, gender) {
+        const m = String(line).match(GENDER_LINE_RE);
+        if (!m) return line;
+        if (!m[3].trim()) return line; // no lyric text on this line
+        return gender ? `${m[1]}{${gender}}${m[3]}` : `${m[1]}${m[3]}`;
+      }
+
+      function updateGenderMarkInfo() {
+        const info = document.getElementById("genderMarkInfo");
+        if (!info) return;
+        const editor = document.getElementById("lyricsEditor");
+        const lines = (editor?.value || "").split("\n");
+        let male = 0, female = 0, both = 0;
+        lines.forEach((l) => {
+          const g = getLineGender(l);
+          if (g === "m") male += 1;
+          else if (g === "f") female += 1;
+          else if (g === "b") both += 1;
+        });
+        info.textContent = (male || female || both)
+          ? `${male} Male, ${female} Female, ${both} Both.`
+          : "No lines assigned a duet voice.";
+      }
+
+      // Duet color schemes edited through the single Primary/Secondary/Outline bar.
+      // The toggle icon selects which voice the bar currently edits. Male is the
+      // default scheme and is what ungendered lyrics render with.
+      const genderColorSchemes = {
+        m: { p: "#ffffff", s: "#45f3ff", o: "#0b0c10" },
+        f: { p: "#ff7ec8", s: "#ffd6ec", o: "#3a0824" },
+        b: { p: "#ff4d4d", s: "#ffd0d0", o: "#2a0606" },
+      };
+      let activeColorGender = "m";
+      const GENDER_TOGGLE_ICON = { m: "♂", f: "♀", b: "⚥" };
+      const GENDER_TOGGLE_TITLE = {
+        m: "Editing Male / default colors — click to switch voice",
+        f: "Editing Female colors — click to switch voice",
+        b: "Editing Both colors — click to switch voice",
+      };
+
+      function syncActiveSchemeFromInputs() {
+        genderColorSchemes[activeColorGender] = {
+          p: document.getElementById("primaryColor").value,
+          s: document.getElementById("secondaryColor").value,
+          o: document.getElementById("outlineColor").value,
+        };
+      }
+
+      function loadSchemeIntoInputs(g) {
+        const s = genderColorSchemes[g];
+        if (!s) return;
+        document.getElementById("primaryColor").value = s.p;
+        document.getElementById("secondaryColor").value = s.s;
+        document.getElementById("outlineColor").value = s.o;
+      }
+
+      function updateColorGenderToggle() {
+        const btn = document.getElementById("colorGenderToggle");
+        if (!btn) return;
+        btn.textContent = GENDER_TOGGLE_ICON[activeColorGender];
+        btn.title = GENDER_TOGGLE_TITLE[activeColorGender];
+        btn.className = `step-btn color-gender-toggle color-gender-${activeColorGender}`;
+      }
+
+      function onGenderColorInput() {
+        syncActiveSchemeFromInputs();
+        updatePreview();
+      }
+
+      function cycleColorGender() {
+        syncActiveSchemeFromInputs();
+        activeColorGender = activeColorGender === "m" ? "f" : activeColorGender === "f" ? "b" : "m";
+        loadSchemeIntoInputs(activeColorGender);
+        updateColorGenderToggle();
+        updatePreview();
+      }
+
+      async function markSelectionGender(code) {
+        // code: 'm' | 'f' | 'b' | null (None removes any voice assignment).
+        if (!selectedAudioFilename || !selectedLrcFilename) {
+          setStatus("Select source media first.", true);
+          return;
+        }
+        const editor = document.getElementById("lyricsEditor");
+        const value = editor.value || "";
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        if (start === end) {
+          setStatus("Highlight the lines in the editor first.", true);
+          return;
+        }
+        // Expand the selection outward to whole lines so a partial highlight still
+        // affects every line it touches.
+        const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+        let lineEnd = value.indexOf("\n", end - 1);
+        if (lineEnd === -1) lineEnd = value.length;
+
+        const before = value.slice(0, lineStart);
+        const target = value.slice(lineStart, lineEnd);
+        const after = value.slice(lineEnd);
+        const updatedBlock = target.split("\n").map((l) => {
+          const m = l.match(GENDER_LINE_RE);
+          if (!m || !m[3].trim()) return l;
+          return setLineGenderMark(l, code);
+        }).join("\n");
+        if (updatedBlock === target) {
+          setStatus("Highlight lines that contain lyric text first.");
+          return;
+        }
+        const updated = before + updatedBlock + after;
+
+        editor.value = updated;
+        editor.setSelectionRange(lineStart, lineStart + updatedBlock.length);
+        renderChorusOverlay();
+        updateTimingRevision(updated);
+        lastCommittedLyricsText = updated;
+        parseLrcData(updated);
+        updatePreview();
+
+        const label = { m: "Male", f: "Female", b: "Both" }[code] || "None";
+        try {
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", updated);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "Lyrics save failed.");
+          setStatus(code ? `Assigned those lines to the ${label} voice.` : "Removed the voice assignment from those lines.");
+        } catch (err) {
+          setStatus(`Failed to update duet voices: ${err}`, true);
         }
       }
 
@@ -2595,6 +2808,7 @@
           fxSelect.addEventListener("change", updateFxPanel);
         }
         installChorusOverlayHook();
+        updateColorGenderToggle();
       });
 
       function getThemeStorageKey() {
@@ -2762,6 +2976,8 @@
       function capturePreviewConfig() {
         const resolution = document.getElementById("previewResolution")?.value || "1280x720";
         const [renderWidth, renderHeight] = resolution.split("x").map((value) => Number(value));
+        syncActiveSchemeFromInputs();
+        const gm = genderColorSchemes.m, gf = genderColorSchemes.f, gb = genderColorSchemes.b;
         return {
           audio_filename: selectedAudioFilename,
           render_width: Number.isFinite(renderWidth) ? renderWidth : 1280,
@@ -2770,9 +2986,18 @@
           font_size: document.getElementById("fontSize").value,
           line_spacing: document.getElementById("lineSpacing").value,
           word_padding: document.getElementById("wordPadding").value,
-          primary_color: document.getElementById("primaryColor").value,
-          secondary_color: document.getElementById("secondaryColor").value,
-          outline_color: document.getElementById("outlineColor").value,
+          primary_color: gm.p,
+          secondary_color: gm.s,
+          outline_color: gm.o,
+          male_primary_color: gm.p,
+          male_secondary_color: gm.s,
+          male_outline_color: gm.o,
+          female_primary_color: gf.p,
+          female_secondary_color: gf.s,
+          female_outline_color: gf.o,
+          both_primary_color: gb.p,
+          both_secondary_color: gb.s,
+          both_outline_color: gb.o,
           outline_width: getOutlineWidthSetting(),
           bg_type: document.getElementById("bgType").value,
           bg_color: document.getElementById("bgColor").value,
@@ -2921,8 +3146,26 @@
         const editorText = document.getElementById("lyricsEditor").value || "";
         const stripped = editorText
           .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ")
-          .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ");
+          .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ")
+          .replace(/\{[mfb]\}/g, " ");
         return stripped.match(/\S+/g) || [];
+      }
+
+      // Duet voice per word, aligned 1:1 with extractWordsFromEditor(). Each word
+      // inherits the gender assigned to the editor line it belongs to.
+      function extractWordGendersFromEditor() {
+        const editorText = document.getElementById("lyricsEditor").value || "";
+        const genders = [];
+        editorText.split("\n").forEach((line) => {
+          const gender = getLineGender(line);
+          const words = line
+            .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ")
+            .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ")
+            .replace(/\{[mfb]\}/g, " ")
+            .match(/\S+/g) || [];
+          words.forEach(() => genders.push(gender));
+        });
+        return genders;
       }
 
       function buildTimedWordEntriesFromLyrics() {
@@ -3051,8 +3294,9 @@
             forcedPlaybackIndex,
           ));
           manualTimingState.activeStart = null;
-          manualTimingState.previewFromAppliedLyrics = manualTimingState.baselineEntries.length > 0
-            && !manualTimingState.entries.some((entry) => entry && Number.isFinite(entry.start));
+          // Timing mode always starts in manual-capture preview: words stay static
+          // and wait for the user's S/F instead of auto-advancing with playback.
+          manualTimingState.previewFromAppliedLyrics = false;
           beginTimingRevision();
           persistManualTiming();
           startTimingModeHeartbeat();
@@ -3177,7 +3421,7 @@
       }
 
       function getPlaybackWordIndexAtTime(time, ignoreManual = false) {
-        if (!ignoreManual && manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length) {
+        if (!ignoreManual && manualTimingState.enabled && manualTimingState.words.length) {
           return Math.max(0, Math.min(manualTimingState.words.length - 1, manualTimingState.cursor));
         }
         // Before the first timed line, playback is at the very start -> first word.
@@ -3197,7 +3441,7 @@
       }
 
       function getPlaybackWordAtTime(time) {
-        if (manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length) {
+        if (manualTimingState.enabled && manualTimingState.words.length) {
           return manualTimingState.words[manualTimingState.cursor] || "";
         }
         if (!lyricLines.length) return "";
@@ -3834,9 +4078,18 @@
             fontSize: document.getElementById("fontSize").value,
             lineSpacing: document.getElementById("lineSpacing").value,
             wordPadding: document.getElementById("wordPadding").value,
-            primaryColor: document.getElementById("primaryColor").value,
-            secondaryColor: document.getElementById("secondaryColor").value,
-            outlineColor: document.getElementById("outlineColor").value,
+            primaryColor: genderColorSchemes.m.p,
+            secondaryColor: genderColorSchemes.m.s,
+            outlineColor: genderColorSchemes.m.o,
+            malePrimaryColor: genderColorSchemes.m.p,
+            maleSecondaryColor: genderColorSchemes.m.s,
+            maleOutlineColor: genderColorSchemes.m.o,
+            femalePrimaryColor: genderColorSchemes.f.p,
+            femaleSecondaryColor: genderColorSchemes.f.s,
+            femaleOutlineColor: genderColorSchemes.f.o,
+            bothPrimaryColor: genderColorSchemes.b.p,
+            bothSecondaryColor: genderColorSchemes.b.s,
+            bothOutlineColor: genderColorSchemes.b.o,
             outlineWidth: getOutlineWidthSetting(),
             bgColor: document.getElementById("bgColor").value,
             bgType: document.getElementById("bgType").value,
@@ -3886,9 +4139,27 @@
         setIf("lineGapNum", preview.lineSpacing || preview.lineGapNum);
         setIf("wordPadding", preview.wordPadding);
         setIf("wordPadNum", preview.wordPadding || preview.wordPadNum);
-        setIf("primaryColor", preview.primaryColor);
-        setIf("secondaryColor", preview.secondaryColor);
-        setIf("outlineColor", preview.outlineColor);
+        // Duet color schemes: male falls back to the legacy primary/secondary/outline
+        // fields so older projects still load, then mirror the active (male) scheme
+        // into the shared color bar.
+        genderColorSchemes.m = {
+          p: preview.malePrimaryColor || preview.primaryColor || genderColorSchemes.m.p,
+          s: preview.maleSecondaryColor || preview.secondaryColor || genderColorSchemes.m.s,
+          o: preview.maleOutlineColor || preview.outlineColor || genderColorSchemes.m.o,
+        };
+        genderColorSchemes.f = {
+          p: preview.femalePrimaryColor || genderColorSchemes.f.p,
+          s: preview.femaleSecondaryColor || genderColorSchemes.f.s,
+          o: preview.femaleOutlineColor || genderColorSchemes.f.o,
+        };
+        genderColorSchemes.b = {
+          p: preview.bothPrimaryColor || genderColorSchemes.b.p,
+          s: preview.bothSecondaryColor || genderColorSchemes.b.s,
+          o: preview.bothOutlineColor || genderColorSchemes.b.o,
+        };
+        activeColorGender = "m";
+        loadSchemeIntoInputs("m");
+        updateColorGenderToggle();
         setIf("outlineWidth", preview.outlineWidth);
         setIf("outlineWidthNum", preview.outlineWidth);
         setIf("bgColor", preview.bgColor);
@@ -4133,8 +4404,12 @@
         const plain = [];
         let breakBefore = false;
         lrcText.split("\n").forEach((line) => {
-          const raw = (line || "").trim();
+          let raw = (line || "").trim();
           if (!raw) { breakBefore = lyricLines.length > 0 || plain.length > 0; return; }
+          // Capture the duet voice for this line, then strip the {m}/{f} marker so
+          // it never appears as lyric text.
+          const lineGender = getLineGender(raw);
+          raw = raw.replace(/\{[mfb]\}/g, "");
           const tags = [...raw.matchAll(tagRegex)];
           if (tags.length === 0) {
             plain.push({ text: raw.replace(endTagRegex, "").trim() || raw, breakBefore });
@@ -4164,13 +4439,13 @@
             if (!fullText) return;
             const endT = fullEnds.length ? toSeconds(fullEnds[fullEnds.length - 1]) : null;
             parsed.forEach((p) => {
-              lyricLines.push({ time: p.time, end: endT, text: fullText, breakBefore });
+              lyricLines.push({ time: p.time, end: endT, text: fullText, breakBefore, gender: lineGender });
               breakBefore = false;
             });
           } else {
             // Inline word-level timing: each timestamp labels the word(s) after it.
             nonEmpty.forEach((p, i) => {
-              lyricLines.push({ time: p.time, end: p.end, text: p.text, breakBefore: breakBefore && i === 0 });
+              lyricLines.push({ time: p.time, end: p.end, text: p.text, breakBefore: breakBefore && i === 0, gender: lineGender });
             });
             breakBefore = false;
           }
@@ -4243,28 +4518,54 @@
 
         let wordTokens = [];
 
-        if (manualTimingState.enabled && !manualTimingState.previewFromAppliedLyrics && manualTimingState.words.length > 0) {
-            manualTimingState.words.forEach((w, idx) => {
+        if (manualTimingState.enabled) {
+            // Timing mode ignores any existing timing: show every word statically
+            // and only fill words the user has captured with S/F this session.
+            // Auto timing (with editor precedence) resumes once timing mode is off.
+            const words = manualTimingState.words.length ? manualTimingState.words : extractWordsFromEditor();
+            const genders = extractWordGendersFromEditor();
+            words.forEach((w, idx) => {
                 const entry = manualTimingState.entries[idx];
                 const startT = (entry && Number.isFinite(entry.start)) ? entry.start : null;
                 // Keep end null when the word has no explicit F yet so it is treated as "open".
                 const endT = (entry && Number.isFinite(entry.end)) ? entry.end : null;
-                wordTokens.push({ text: w, start: startT, end: endT, isManual: true, idx: idx });
+                wordTokens.push({ text: w, start: startT, end: endT, isManual: true, idx: idx, gender: genders[idx] || null });
             });
+            if (wordTokens.length === 0) return [];
+        } else if (lyricLines.length === 0) {
+            // No timing is present (e.g. right after "Clear All Timing"). Show the
+            // lyric words statically so they never disappear; they simply stay
+            // unfilled until timing is captured or generated again.
+            const editorText = document.getElementById("lyricsEditor")?.value || "";
+            let sawContent = false;
+            editorText.split("\n").forEach((rawLine) => {
+                const gender = getLineGender(rawLine);
+                const line = rawLine
+                    .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, "")
+                    .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, "")
+                    .replace(/\{[mfb]\}/g, "")
+                    .trim();
+                if (!line) return;
+                const words = line.split(/\s+/).filter(Boolean);
+                words.forEach((w, wIdx) => {
+                    wordTokens.push({ text: w, start: null, end: null, isStatic: true, breakBefore: sawContent && wIdx === 0, gender });
+                });
+                if (words.length) sawContent = true;
+            });
+            if (wordTokens.length === 0) return [];
         } else {
-            if (lyricLines.length === 0) return [];
             lyricLines.forEach((item, idx) => {
                 const nextTime = lyricLines[idx + 1] ? lyricLines[idx + 1].time : item.time + 3.0;
                 let words = (item.text || "").split(" ").filter(Boolean);
                 if (!words.length) return;
                 if (words.length === 1 && Number.isFinite(item.end) && item.end > item.time) {
                     // Word-level line with an explicit end (F): fill start->end, then hold until next line.
-                    wordTokens.push({ text: words[0], start: item.time, end: item.end, isLrcStart: true, breakBefore: !!item.breakBefore });
+                    wordTokens.push({ text: words[0], start: item.time, end: item.end, isLrcStart: true, breakBefore: !!item.breakBefore, gender: item.gender || null });
                     return;
                 }
                 const durPerWord = (nextTime - item.time) / words.length;
                 words.forEach((w, wIdx) => {
-                    wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0, breakBefore: !!item.breakBefore && wIdx === 0 });
+                    wordTokens.push({ text: w, start: item.time + (wIdx * durPerWord), end: item.time + ((wIdx + 1) * durPerWord), isLrcStart: wIdx === 0, breakBefore: !!item.breakBefore && wIdx === 0, gender: item.gender || null });
                 });
             });
         }
@@ -4289,7 +4590,10 @@
             if (forceBreak && currLine.length > 0) { lines.push(currLine); currLine = []; currW = 0; }
 
             let prog = 0, isActive = false, isPast = false;
-            if (token.isManual) {
+            if (token.isStatic) {
+                // Untimed word: render as-is with no fill or highlight.
+                isActive = false; isPast = false; prog = 0;
+            } else if (token.isManual) {
                 const s = token.start;
                 const e = token.end;
                 if (s === null) {
@@ -4327,6 +4631,7 @@
               end: token.end,
               isManual: !!token.isManual,
               idx: token.idx,
+              gender: token.gender || null,
             });
             currW += (currLine.length === 1 ? tw : spaceW + tw);
         });
@@ -4389,7 +4694,7 @@
 
       let smoothScrollY = 0; // State variable for Continuous Scroll Mode
 
-     function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX, frameTime) {
+     function drawTokenLine(tokens, y, pColor, sColor, oColor, wordPad, centerX, frameTime, schemes) {
       const spaceW = ctx.measureText(" ").width + wordPad;
       const cx = Number.isFinite(centerX) ? centerX : (canvas.width / 2);
 
@@ -4407,6 +4712,12 @@
           if (i > 0) x += spaceW;
           const tw = ctx.measureText(t.text).width;
           positions.push({ x: x + (tw / 2), width: tw });
+          // Per-word duet voice colors: fall back to the default scheme when the
+          // word has no gender assigned.
+          const scheme = (schemes && t.gender && schemes[t.gender]) ? schemes[t.gender] : null;
+          const wp = scheme ? scheme.p : pColor;
+          const ws = scheme ? scheme.s : sColor;
+          const wo = scheme ? scheme.o : oColor;
           // Word-scope FX is a one-shot entrance animation that runs as the word
           // is reached. It must only apply while the word is animating in, and it
           // must never leave a word invisible once its animation window passed.
@@ -4427,7 +4738,7 @@
             ctx.translate(-(x + (tw / 2)), -y);
             if (wordTransition.blur > 0) ctx.filter = `blur(${wordTransition.blur}px)`;
           }
-          ctx.strokeStyle = oColor;
+          ctx.strokeStyle = wo;
           if (outlineStrokeWidth > 0) ctx.strokeText(t.text, x, y);
 
           // Once 'F' was pressed (finite end) and playback is past it, hold the word fully filled.
@@ -4444,17 +4755,17 @@
               const right = t.text.slice(split);
               const lw = ctx.measureText(left).width;
 
-              ctx.fillStyle = pColor;
+              ctx.fillStyle = wp;
               ctx.fillText(left, x, y);
 
-              ctx.fillStyle = sColor;
+              ctx.fillStyle = ws;
               ctx.fillText(right, x + lw, y);
 
           } else if (currentProgress >= 1) { // NEW: Use currentProgress
-              ctx.fillStyle = pColor;
+              ctx.fillStyle = wp;
               ctx.fillText(t.text, x, y);
           } else {
-              ctx.fillStyle = sColor;
+              ctx.fillStyle = ws;
               ctx.fillText(t.text, x, y);
           }
           x += tw;
@@ -4512,7 +4823,7 @@
         ctx.clearRect(0, 0, w, h);
         const bgType = document.getElementById("bgType").value;
         const bgCol = document.getElementById("bgColor").value;
-        const primCol = document.getElementById("primaryColor").value;
+        const primCol = genderColorSchemes.m.p;
 
         const hasPreviewMedia = !!(typeof selectedAudioFilename !== 'undefined' && selectedAudioFilename && audio && audio.src);
 
@@ -4535,7 +4846,7 @@
         } else if (bgType === "gradient") {
             let grd = ctx.createLinearGradient(0, 0, w, h);
             grd.addColorStop(0, bgCol);
-            grd.addColorStop(1, document.getElementById("outlineColor").value);
+            grd.addColorStop(1, genderColorSchemes.m.o);
             ctx.fillStyle = grd;
             ctx.fillRect(0, 0, w, h);
         } else if (bgType === "spiral") {
@@ -4552,9 +4863,17 @@
 
         const fName = document.getElementById("fontSelect").value || "Arial";
         const fSize = parseInt(document.getElementById("fontSize").value, 10) || 130;
-        const outline = document.getElementById("outlineColor").value;
-        const primary = document.getElementById("primaryColor").value;
-        const secondary = document.getElementById("secondaryColor").value;
+        // Keep the active scheme's live edits in sync, then draw from the scheme
+        // state. Male is the base/default used for ungendered lyrics.
+        syncActiveSchemeFromInputs();
+        const primary = genderColorSchemes.m.p;
+        const secondary = genderColorSchemes.m.s;
+        const outline = genderColorSchemes.m.o;
+        const genderSchemes = {
+          m: { p: genderColorSchemes.m.p, s: genderColorSchemes.m.s, o: genderColorSchemes.m.o },
+          f: { p: genderColorSchemes.f.p, s: genderColorSchemes.f.s, o: genderColorSchemes.f.o },
+          b: { p: genderColorSchemes.b.p, s: genderColorSchemes.b.s, o: genderColorSchemes.b.o },
+        };
         const tStyle = document.getElementById("transitionStyle").value;
         const effect = document.getElementById("textEffect").value;
         const baseLineGap = parseInt(document.getElementById("lineSpacing").value, 10) || 30;
@@ -4672,7 +4991,7 @@
             if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
             ctx.translate(cx, cy + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -cy);
 
-            linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx, time));
+            linesToDraw.forEach((t, i) => drawTokenLine(t, bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap), primary, secondary, outline, wordPad, cx, time, genderSchemes));
             ctx.restore();
 
           } else if (fxScope === "line") {
@@ -4698,13 +5017,13 @@
               let lineY = bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap);
 
               ctx.translate(cx, lineY + tr.yOff); ctx.scale(tr.scale, tr.scale); if (tr.skewX) ctx.transform(1, 0, tr.skewX, 1, 0, 0); ctx.rotate(tr.rotation || 0); ctx.translate(-cx, -lineY);
-              drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx, time);
+              drawTokenLine(t, lineY, primary, secondary, outline, wordPad, cx, time, genderSchemes);
               ctx.restore();
             });
           } else {
             linesToDraw.forEach((line, i) => {
               const lineY = bTop + Math.round(lHeight / 2) + i * (lHeight + lineGap);
-              drawTokenLine(line, lineY, primary, secondary, outline, wordPad, cx, time);
+              drawTokenLine(line, lineY, primary, secondary, outline, wordPad, cx, time, genderSchemes);
             });
           }
         } else {
