@@ -164,13 +164,15 @@ Use this interface to paste YouTube/web URLs. Downloaded media will be sent dire
 ## Lyrics Corrections 
 
 **Word-Level Timing Mode**
-- When a word starts press 'S' and press 'F' when it finishes (useful when there is a delay before the next word starts, otherwise just keep pressing 'S' at the beginning of each word being sung).
-- Press the same Timing Mode button to exit that mode.
+- After a song  is loaded and the lyrics are present in the lyrics manager, press Enable Timing Mode.
+- You can look at the active word (less confusing) at the bottom of the preview pane.
+- Pess 'S' when you hear that word being sung. Continue on each word. If there is a time-gap between two words, press 'F' after the active word is finished being sung for greater accuracy (useful when there is a delay before the next word starts, otherwise just keep pressing 'S' at the beginning of each word being sung).
+- Press the same Timing Mode button to exit Timing mode.
 - Timing is automatically adjusted in real time in the Preview Window and the Lyrics Editor.
-- Were you too slow on your timing? No worries, press the 'I'm Slow' button to have all the timings adjusted by -00.00.05 in realtime.
-- Were you too fast? No worries, press the 'I'm Fast' button to have all the timings adjusted by +00.00.05 in realtime.
+- Were you too slow on your timing? Press the 'I'm Slow' button to have all the timings adjusted by -00.00.05 in realtime.
+- Were you too fast? Press the 'I'm Fast' button to have all the timings adjusted by +00.00.05 in realtime.
 Note: When you enable Timing mode:
-  The active word does not progress with the timing already in the lyrics editor. It will wait for you to do the manual timing (S/F). So you can adjust a few words if you choose, disable it again, and it will resume from there.
+  The active word does not progress even if there is timing already in the lyrics manager. It will wait for you to do the manual timing (S/F). So you can adjust a few words if you choose, disable it again, and it will resume from there.
   
 **Auto-Correct Word Timing**
 - Alternatively you can have AI try to correct the word-level timing on the song.
@@ -179,22 +181,29 @@ Note: When you enable Timing mode:
 - Go forward or backwards through the lyric revisions in case you prefer one over the other.
 
 **Line Breaks**
-- In the Lyrics Manager, Press Enter after a word/line to have the preview register it as the start of another line/sentence.
+- In the Lyrics Manager, Press Enter after a word/line to have an empty line between words, the preview registers this as the start of a sentence.
 
 **Save Your Progress**
 - When satisifed or just done for now, press Save Project Snapshot and resume later by simply pressing Load in the Media Vault, all settings will be saved.
 
 **Chorus Vocals**
-Do you want certain words sung in your karaoke video, and want 100% control of over which ones? You got it!
-- In the Lyrics Editor, select the words/lines that you want to hear the vocals in your final karaoke video.
-- Then press +Chorus button.
+Do you want certain words vocalized by the original artist, in your karaoke video, and want 100% control of over which specific words? You got it!
+- In the Lyrics manager, select the words/lines that you want to hear the vocals in your final karaoke video, and press +Chorus button.
 - They will be highlighted/bolded and when you generate a Karaoke + Chorus Video,  you will hear the original singer's vocals on those words (assuming your timing is correct).
-
 - To remove any words/lines, simply select the words/lines, and press -Chorus.
 - Those lines will be unbolded again.
-  
+- If you do not select any words but click Render with Chorus, the app will determine the chorus automatically and render the song with that.
+
+**Duet Vocals**
+Do you want to create a duet karaoke song? No problemo. 
+- In the Lyrics manager, select the words/lines for the male, femal or both, and press the appropriate button.
+- They will be highlighted/bolded with either blue, pink, or green. 
+- To remove any words/lines, simply select the words/lines, and press None.
+- Those lines will be unbolded again.
+- Next, you can customize the color scheme for the mail, female, or both, by toggling the gener icon next to the color scheme bar in the preview pane. After all, not every girl likes pink am I right?
+
 **Making the Karaoke Videos**
-- First Select the Resolution you want (when making the edits, I find it is much more responsive if you select a lower resolutino while you are creating/editing).
+- First Select the Resolution you want (when making the edits, I find it is much more responsive if you select a lower resolution while you are creating/editing).
 - Make sure your lyrics, timings, and Fx, colors, etc are all selected/chosen.
 - Press 1,2, or 3 of the Create Karaoke Buttons below the Preview (Normal Karaoke, Karaoke+Chorus, Karaoke+Original Vocals)
 - Videos will start being generated or queu up if anopther job is active.
