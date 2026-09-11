@@ -1,5 +1,5 @@
 # 🎤 OnePage-Karaoke 
-### AI Audio & Video Production Suite (No AI Agent or Subscriptions required)
+### AI Audio & Video Production Suite 
 
 ![Docker](https://img.shields.io/badge/Docker-Supported-blue?logo=docker)
 ![NVIDIA GPU](https://img.shields.io/badge/GPU-CUDA_11.8-76B900?logo=nvidia)
@@ -9,6 +9,18 @@
 
 <img width="895" height="698" alt="image" src="https://github.com/user-attachments/assets/569e213c-f779-4cfa-87f6-45714d532f8a" />
 
+#### OnePage Karaoke is the culmination of wanting a self-hosted, simple but highly flexible WebUI-driven karaoke song generator. 
+It was born out of my love and passion for singing karaoke songs with my kids but waiting forever for someone to create a karaoke song from a new release drove me crazy.
+So I dug around and found all the good karaoke creation tools were either strictly for Windows, or pricey, gimmicky, subscription-based, overly complex, or too automated, too limited, or simply didn't work. 
+You can find a messload of karaoke generators on github, every day another popping up. 
+These are usually one-commit-wonders that make you wonder how much commitment the developer put into the code. I got tired of building images for hours, watching & praying pip doesn't do what pip does best, give up.
+
+I wanted it to usable even if you don't want to spend a ridiculous amount on a GPU so a decent LLM can accurately get the word-level timing correct. 
+I wanted cool effects, duet-capabilities, chorus or no chorus vocals...
+Or even better, I wanted absolute flexibility and control over everything, from the website theme to every little detail in the song itself.
+I wanted it to look professional, but not have the interface so complex, that only an engineer could understand it.
+I hope you enjoy it, you don't even have to buy me a coffee, I just wanted to give something to the world because it's the right thing to do. 
+
 ## 🎉 v2.0.0 New Features (from v1.0.0)
 ### Canvas & Rendering
 - 60 FPS Real-Time Preview with requestAnimationFrame rendering loop
@@ -17,7 +29,7 @@
 - 11 Transition Animations (Fade, Pop, Slide, Zoom, Drop, Blur, Rotate-360°, Glimmer, Shake, Flip, Bouncing Ball)
 - 3 Reveal Modes (Block, Continuous/Scrolling, Eager)
 - Advanced Background Support (Solid color, linear gradient, spiral gradient, custom image)
-- Dynamic Resolution Output (360p, 540p, 720p, 1080p with aspect ratio preservation)
+- Dynamic Resolution Output (240p, 360p, 540p, 720p, 1080p, 1440p with aspect ratio preservation)
 - NVENC GPU Hardware Encoding with CPU fallback
 - Per-Word Visual Effects when word-scope animations enabled
 ### Audio Features
@@ -25,8 +37,10 @@
 - Pitch Shifting (0.5–1.5x) in real-time preview
 - Playback Speed Control (0.5x, 1.0x, 1.5x)
 - Chorus-Aware Stem Separation (auto-detect chorus, render with vocals restored only in chorus sections)
+- Or Custom Chorus generation by highlighting words/lines.
+- Duet Mode (male, female, both) with complete flexibilty (toggle the gender icon) on color schemes for all 3.
 - 3 Render Modes (Preview with vocals, Final instrumental, Chorus-aware instrumental)
-- Lyrics & Timing
+### Lyrics & Timing
 - Multi-Language Transcription (Auto, English, Russian, Hebrew, Spanish, French, German, Italian, Portuguese, Polish)
 - 3 Lyrics Providers (lrclib, Genius, Syncedlyrics)
 - Word-Level Timing Correction with 3 AI modes:
@@ -42,9 +56,9 @@
 - Auto-Sync Pipeline (automatic stem separation → lyrics fetch → project creation)
 - Per-Project Organization (all assets in project-specific directories)
 ### UI/UX
-- Collapsible Section System ([1] Get A Song, [2] Pull Lyrics, [3] Edit Lyrics, [4] Render)
+- Collapsible & Expandable Section/Panels System.
 - Multiple Built-in Themes (Catppuccin Mocha, Dracula, Gruvbox Dark, Nord, Rosé Pine, Tokyo Night)
-- Theme generator (bash script) - auto generates a random but complementary theme and adds it to the themes directory.
+- Theme generator (bash script) - auto generates a random but color-complementary theme and adds it to the themes directory.
 - Theme System with Metadata (source credit, license, author info display)
 - Compact Control Bar (font selector, size/gap/padding sliders, color pickers, FX controls in header overlay)
 - Live Status Badges (running, completed, failed, cancelled with progress bars)
@@ -153,8 +167,10 @@ Use this interface to paste YouTube/web URLs. Downloaded media will be sent dire
 - When a word starts press 'S' and press 'F' when it finishes (useful when there is a delay before the next word starts, otherwise just keep pressing 'S' at the beginning of each word being sung).
 - Press the same Timing Mode button to exit that mode.
 - Timing is automatically adjusted in real time in the Preview Window and the Lyrics Editor.
-- Were you too slow? No worries, press the 'I'm Slow' button to have all the timings adjusted by -00.00.05
-- Were you too fast? No worries, press the 'I'm Fast' button to have all the timings adjusted by +00.00.05
+- Were you too slow on your timing? No worries, press the 'I'm Slow' button to have all the timings adjusted by -00.00.05 in realtime.
+- Were you too fast? No worries, press the 'I'm Fast' button to have all the timings adjusted by +00.00.05 in realtime.
+Note: When you enable Timing mode:
+  The active word does not progress with the timing already in the lyrics editor. It will wait for you to do the manual timing (S/F). So you can adjust a few words if you choose, disable it again, and it will resume from there.
   
 **Auto-Correct Word Timing**
 - Alternatively you can have AI try to correct the word-level timing on the song.
