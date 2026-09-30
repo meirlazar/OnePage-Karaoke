@@ -277,6 +277,106 @@
           border-radius: 50%;
           border: none;
       }
+
+      /* Volume slider: strip the generic input padding so the thumb reaches the
+         far-left edge when the value is 0.00 (edge-to-edge track). */
+      #volume {
+          -webkit-appearance: none;
+          appearance: none;
+          margin: 0;
+          padding: 0;
+          height: 16px;
+          background: transparent;
+          border: none;
+      }
+      #volume::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+          cursor: pointer;
+      }
+      #volume::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 14px;
+          width: 14px;
+          background: var(--accent);
+          border-radius: 50%;
+          cursor: pointer;
+          margin-top: -4px;
+      }
+      #volume::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+      }
+      #volume::-moz-range-thumb {
+          height: 14px;
+          width: 14px;
+          background: var(--accent);
+          border-radius: 50%;
+          border: none;
+      }
+
+      /* Larger Play button with a continuous shine sweep. */
+      #playBtn {
+          position: relative;
+          overflow: hidden;
+          min-width: 96px;
+          padding: 12px 24px;
+          font-size: 16px;
+          font-weight: 800;
+          letter-spacing: 0.03em;
+          border-radius: 8px;
+          box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+      }
+      #playBtn::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          left: -60%;
+          width: 40%;
+          height: 100%;
+          background: linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.65) 50%, transparent 100%);
+          transform: skewX(-20deg);
+          animation: playShine 2.6s ease-in-out infinite;
+          pointer-events: none;
+      }
+      @keyframes playShine {
+          0% { left: -60%; }
+          55% { left: 130%; }
+          100% { left: 130%; }
+      }
+
+      /* Timing Mode indicator: red when off, flashing glowing green when on. */
+      #manualTimingBtn {
+          font-weight: 700;
+          transition: background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+      }
+      #manualTimingBtn.timing-off {
+          background: var(--danger);
+          color: #fff;
+          border-color: var(--danger);
+          box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 55%, transparent);
+      }
+      #manualTimingBtn.timing-on {
+          background: #16c60c;
+          color: #04210a;
+          border-color: #37ff2b;
+          animation: timingModeFlash 1s ease-in-out infinite;
+      }
+      @keyframes timingModeFlash {
+          0%, 100% {
+              background: #12a908;
+              box-shadow: 0 0 6px rgba(34, 220, 20, 0.6), 0 0 12px rgba(34, 220, 20, 0.35);
+          }
+          50% {
+              background: #3bff2e;
+              box-shadow: 0 0 16px rgba(60, 255, 46, 1), 0 0 30px rgba(60, 255, 46, 0.75);
+          }
+      }
         .vocal-waveform-rail {
           position: relative;
           height: 54px;
@@ -379,6 +479,24 @@
       .gender-btn-female { border-color: #ff00ff !important; }
       .gender-btn-both { border-color: #32cd32 !important; }
       .gender-btn-none { border-color: var(--text-muted) !important; }
+      /* Single burn-bright toggle buttons (chorus + duet voice). */
+      .chorus-toggle-btn {
+        background: #ff8c00 !important; border-color: #ff8c00 !important;
+        color: #1a0d00 !important; font-weight: 800; letter-spacing: .02em;
+        box-shadow: 0 0 16px rgba(255,140,0,.55);
+        transition: filter .15s ease, box-shadow .15s ease, transform .1s ease;
+      }
+      .chorus-toggle-btn:hover { filter: brightness(1.12); box-shadow: 0 0 22px rgba(255,140,0,.75); }
+      .chorus-toggle-btn:active { transform: scale(.97); }
+      .gender-toggle-btn {
+        font-weight: 800; letter-spacing: .02em;
+        transition: background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .1s ease;
+      }
+      .gender-toggle-btn:active { transform: scale(.97); }
+      .gender-toggle-male   { background:#4169e1 !important; border-color:#4169e1 !important; color:#fff !important;    box-shadow:0 0 18px rgba(65,105,225,.7); }
+      .gender-toggle-female { background:#ff1493 !important; border-color:#ff1493 !important; color:#fff !important;    box-shadow:0 0 18px rgba(255,20,147,.75); }
+      .gender-toggle-both   { background:#32cd32 !important; border-color:#32cd32 !important; color:#06210b !important; box-shadow:0 0 18px rgba(50,205,50,.65); }
+      .gender-toggle-none   { background:#c0c0c0 !important; border-color:#c0c0c0 !important; color:#1a1a1a !important; box-shadow:0 0 10px rgba(192,192,192,.5); }
       .color-gender-toggle.color-gender-m { color: #4169e1; }
       .color-gender-toggle.color-gender-f { color: #ff1493; }
       .color-gender-toggle.color-gender-b { color: #32cd32; }
@@ -471,8 +589,9 @@
       .compact-ctrl { display: flex; align-items: center; gap: 6px; background: color-mix(in srgb, var(--bg-surface) 80%, transparent); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; }
       .compact-ctrl input[type="color"] { width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; background: transparent; }
       .compact-ctrl select, .compact-ctrl input[type="range"] { background: transparent; border: none; padding: 0; width: 80px; color: var(--control-fg); }
-      .step-btn { width: 20px; height: 20px; padding: 0; border: 1px solid var(--control-border); background: transparent; color: var(--control-fg); cursor: pointer; line-height: 16px; }
-      .step-btn:hover { background: var(--accent); color: var(--button-fg); }
+      .step-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--control-border); border-radius: 5px; background: color-mix(in srgb, var(--bg-surface) 55%, transparent); color: var(--control-fg); cursor: pointer; font-size: 9px; line-height: 1; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease; }
+      .step-btn:hover { background: var(--accent); color: var(--button-fg); border-color: var(--accent); }
+      .step-btn:active { transform: scale(0.9); }
       .compact-ctrl select:focus { outline: none; }
       .compact-ctrl select option { background-color: var(--control-bg); color: var(--control-fg); }
       /* The canvas is the only elastic part of the preview pane: it shrinks so
@@ -610,22 +729,26 @@
       @media (max-width: 900px) {
         .render-actions { grid-template-columns: 1fr; }
       }
-      .arrow{ position:relative;  width:100%;  height: 100%; color: red; cursor:pointer; transition:0.5s; overflow:hidden; }
-      .arrow:hover{ animation:borderAni 5s cubic-bezier(0, 0.6, 1, 0.4); border-radius:50%; }
-      .arrow:after{ position:absolute;  display:block;  content:""; width: 100pct;  height: 100pct;  top:-1px; border-bottom:solid 2px; border-color:black ; transform:translatex(4px); }
-      .arrow:before{ position:absolute; display:block; content:""; color:red; width: 100pct; height: 100%; border-top:solid 2px; border-left:solid 2px; top:50%; left:2px; transform-origin:0% 0%; transform:rotatez(-45deg); }
-      .arrow:hover:before{ animation: aniArrow01 1s cubic-bezier(0, 0.6, 1, 0.4) infinite 0.2s; }
-      .arrow:hover:after{ animation: aniArrow02 1s cubic-bezier(0, 0.6, 1, 0.4) infinite 0.2s; }
-
-      @keyframes aniArrow01 {  0% {  transform:rotatez(-45deg) translateY(30px) translateX(30px); }
-      100% { transform: rotatez(-45deg) translateY(-35px) translateX(-35px);  }
+      /* Circular revision nav arrows: clean, glassy, with a directional nudge on hover. */
+      .arrow{
+        display:inline-flex; align-items:center; justify-content:center;
+        width:100%; height:100%; min-height:40px; padding:0;
+        font-size:14px; line-height:1; font-weight:700;
+        color:var(--control-fg);
+        background:color-mix(in srgb, var(--bg-surface) 80%, transparent);
+        border:1px solid var(--control-border); border-radius:50%;
+        cursor:pointer; -webkit-tap-highlight-color:transparent;
+        transition:transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease, color .18s ease;
       }
-      @keyframes aniArrow02 { 0% { transform:translateX(45px); }
-      100% { transform:translateX(-44px); }
+      .arrow:hover{
+        color:var(--button-fg);
+        background:var(--accent); border-color:var(--accent);
+        box-shadow:0 4px 16px color-mix(in srgb, var(--accent) 45%, transparent);
       }
-      @keyframes borderAni{  0% { border:solid 2px orange; }
-      100% { border:solid 3px red;  border-radius:50%; }
-      }
+      .arrow.aniArrow01:hover{ transform:translateX(-3px) scale(1.08); }
+      .arrow.aniArrow02:hover{ transform:translateX(3px) scale(1.08); }
+      .arrow:active{ transform:scale(.92); }
+      .arrow:disabled, .arrow[disabled]{ opacity:.4; cursor:not-allowed; transform:none; box-shadow:none; }
       /* ---- Touch timing controls (tap Start/End on a phone/tablet) ---- */
       .touch-timing-controls { display: none; gap: 10px; padding: 10px 16px; background: var(--bg-surface); border-top: 1px solid var(--border); }
       .touch-timing-controls .btn { flex: 1; padding: 16px 12px; font-size: 16px; font-weight: 800; letter-spacing: 0.04em; border-radius: 8px; touch-action: manipulation; user-select: none; }
@@ -670,6 +793,12 @@
             <span class="section-toggle-arrow">▾</span>
           </button>
           <div id="sectionTopJobsBody" class="section-body">
+
+            <!-- Add this utility container -->
+        <div style="display: flex; justify-content: flex-end; padding-bottom: 8px;">
+          <button class="btn btn-small" onclick="clearInactiveJobs()" title="Clear finished, failed, and cancelled jobs">Clear Inactive</button>
+        </div>
+
             <div id="job-list" class="job-list">No jobs yet.</div>
           </div>
         </div>
@@ -771,13 +900,19 @@
           <div id="sectionStatusBody" class="section-body">
             <div class="pipeline-section" style="margin-top:0; margin-bottom:12px">
               <label>Lyrics Service</label>
-              <select id="lyricsProvider">
+              <select id="lyricsProvider" onchange="onLyricsProviderChange()">
                 <option value="auto" selected>Auto (best result)</option>
                 <option value="lrclib">LRCLib</option>
                 <option value="syncedlyrics">syncedlyrics</option>
                 <option value="genius">Genius</option>
+                <option value="suno">Suno (paste song link)</option>
               </select>
+              <input type="text" id="sunoUrl" placeholder="https://suno.com/song/… or song ID"
+                     style="display:none; width:100%; margin-top:6px; box-sizing:border-box;"
+                     title="Paste the Suno song link or ID to pull its exact lyrics." />
               <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
+              <input type="file" id="lrcUploadInput" accept=".lrc,.txt" style="display:none" onchange="uploadLrcFile(this)" />
+              <button class="btn btn-small btn-wide" style="margin-top:6px" onclick="document.getElementById('lrcUploadInput').click()" title="Browse to a .lrc file on your computer and load it as the lyrics for the mounted media.">Upload LRC</button>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
               <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
@@ -787,24 +922,24 @@
               <div id="lyricsChorusOverlay" class="lyrics-overlay" aria-hidden="true"></div>
               <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()" onscroll="syncChorusOverlayScroll()"></textarea>
             </div>
-            <div class="row2" style="margin-top: 8px;">
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to vocalize them in the chorus render. Marked words appear bold.">Add Chorus {*}</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="markSelectionChorus(false)" title="Highlight words in the editor, then click to remove them from the chorus vocals.">Remove Chorus</button>
+            <div style="display:flex; gap:6px; margin-top: 8px;">
+              <button class="btn btn-small chorus-toggle-btn" style="margin-top:0; flex:1" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to add them to the chorus vocals. Marked words appear bold.">✦ +Chorus</button>
+              <button class="btn btn-small chorus-toggle-btn" style="margin-top:0; flex:1" onclick="markSelectionChorus(false)" title="Highlight marked words, then click to remove them from the chorus vocals.">✕ −Chorus</button>
             </div>
             <div id="chorusMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No words marked for chorus vocals (auto-detect will be used).</div>
             <div style="display:flex; gap:6px; margin-top:8px;">
-              <button class="btn btn-small gender-btn-male" style="margin-top:0; flex:1" onclick="markSelectionGender('m')" title="Highlight lines in the editor, then click to assign them to the Male voice.">♂ Male {m}</button>
-              <button class="btn btn-small gender-btn-female" style="margin-top:0; flex:1" onclick="markSelectionGender('f')" title="Highlight lines in the editor, then click to assign them to the Female voice.">♀ Female {f}</button>
-              <button class="btn btn-small gender-btn-both" style="margin-top:0; flex:1" onclick="markSelectionGender('b')" title="Highlight lines in the editor, then click to assign them to Both voices.">⚥ Both {b}</button>
-              <button class="btn btn-small gender-btn-none" style="margin-top:0; flex:1" onclick="markSelectionGender(null)" title="Highlight lines in the editor, then click to remove any voice assignment.">✕ None</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-male" style="margin-top:0; flex:1" onclick="markSelectionGender('m')" title="Highlight lines in the editor, then click to assign the Male voice.">♂ Male</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-female" style="margin-top:0; flex:1" onclick="markSelectionGender('f')" title="Highlight lines in the editor, then click to assign the Female voice.">♀ Female</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-both" style="margin-top:0; flex:1" onclick="markSelectionGender('b')" title="Highlight lines in the editor, then click to assign Both voices.">⚥ Both</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-none" style="margin-top:0; flex:1" onclick="markSelectionGender(null)" title="Highlight lines in the editor, then click to remove the duet voice.">✕ None</button>
             </div>
             <div id="genderMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No lines assigned a duet voice.</div>
             <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted); text-align:center;">Edits save automatically. Timing-mode adjustments update these lyrics live.</div>
             <div class="row2" style="margin-top: 10px;">
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('major')" title="Rebuild timing from the AI alignment">Major Auto-Correct</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(-0.05)" title="Shift every start and end timestamp 0.05s earlier. Creates a new revision each press; press repeatedly to keep nudging.">I'm slow (-00:00.05)</button>
-              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(+0.05)" title="Shift every start and end timestamp 0.05s later. Creates a new revision each press; press repeatedly to keep nudging.">I'm fast (+00:00.05)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(-0.01)" title="Shift timing 0.01s earlier. With no lyrics highlighted this nudges every timestamp; highlight word(s)/line(s) to nudge only those. Creates a new revision each press.">I'm slow (-00:00.01)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="shiftAllLyricsTiming(+0.01)" title="Shift timing 0.01s later. With no lyrics highlighted this nudges every timestamp; highlight word(s)/line(s) to nudge only those. Creates a new revision each press.">I'm fast (+00:00.01)</button>
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="clearAllLyricsTiming()" title="Create a new revision with the same lyric words and no timing">Clear All Timing</button>
               <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('safe-word')" title="Rebuild word timing while preventing overlapping or stalled word highlights">Safe Word-Level Sync</button>
             </div>
@@ -821,12 +956,12 @@
               <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
             </div>
             <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
-              <button class="arrow aniArrow01" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">◀</button>
+              <button class="arrow aniArrow01" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">❮</button>
               <div style="min-width:0; text-align:center;">
                 <div style="font-size:10px; color:var(--text-muted);">Lyrics Revisions (auto-loaded)</div>
                 <div id="lyricsRevisionMeta" style="min-height:40px; margin-top:4px; font-size:9px; color:var(--text-muted); overflow:hidden; line-height:1.3;" aria-live="polite">Revision -</div>
               </div>
-              <button class="arrow aniArrow02" onclick="stepLyricsRevision(1)" title="Next lyrics version">▶</button>
+              <button class="arrow aniArrow02" onclick="stepLyricsRevision(1)" title="Next lyrics version">❯</button>
             </div>
           </div>
         </div>
@@ -877,12 +1012,12 @@
 
               <div class="compact-ctrl">
                 <button class="step-btn color-gender-toggle" id="colorGenderToggle" type="button" title="Editing Male / default colors — click to switch voice" onclick="cycleColorGender()" style="min-width: 26px; font-size: 14px;">♂</button>
-                <input type="color" id="primaryColor" value="#ffffff" title="Primary" oninput="onGenderColorInput()" />
+                <input type="color" id="primaryColor" value="#366fe0" title="Primary" oninput="onGenderColorInput()" />
                 <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="onGenderColorInput()" />
                 <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="onGenderColorInput()" />
                 <button class="step-btn" type="button" title="Thicker outline" onpointerdown="startControlStep('outlineWidth', 1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
                 <button class="step-btn" type="button" title="Thinner outline (0 = none)" onpointerdown="startControlStep('outlineWidth', -1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
-                <input type="hidden" id="outlineWidth" value="12" />
+                <input type="hidden" id="outlineWidth" value="2" />
                 <input type="number" id="outlineWidthNum" min="0" max="40" value="12" title="Outline thickness (0 = none)" oninput="document.getElementById('outlineWidth').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
               </div>
 
@@ -921,7 +1056,7 @@
 
           <div id="manualTimingPanel" class="integrated-timing-rail">
             <div style="display: flex; align-items: center; gap: 12px; min-width: 200px">
-              <button class="btn btn-small" id="manualTimingBtn" onclick="toggleManualTiming()" style="background: var(--accent); color: var(--button-fg)">Timing Mode is OFF</button>
+              <button class="btn btn-small timing-off" id="manualTimingBtn" onclick="toggleManualTiming()">Timing Mode is OFF</button>
               <div style="font-size: 11px; color: var(--text-muted)">Press <b>S</b> (Start) / <b>F</b> (End)</div>
             </div>
             <div style="flex: 1; text-align: center">
@@ -947,9 +1082,9 @@
           </div>
 
           <div class="media-controls">
-            <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">◀◀</button>
-            <button class="btn" id="playBtn" onclick="togglePlayback()" style="min-width: 60px">Play</button>
-            <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">▶▶</button>
+            <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">«</button>
+            <button class="btn" id="playBtn" onclick="togglePlayback()">Play</button>
+            <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">»</button>
             <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
             <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
 
@@ -970,7 +1105,7 @@
               <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
                <option value="426x240">240p (426x240)</option>
                 <option value="640x360" selected>360p (640x360)</option>
-                <option value="854x480)">480p (854x480))</option>
+                <option value="854x480">480p (854x480)</option>
                 <option value="960x540">540p (960x540)</option>
                 <option value="1280x720">720p (1280x720)</option>
                 <option value="1920x1080">1080p (1920x1080)</option>
@@ -1015,6 +1150,14 @@
           </button>
           <div id="sectionLibraryBody" class="section-body">
             <div class="pipeline-section" style="margin-top:0">
+              <label>Profile</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select id="profileSelect" style="flex:1;" onchange="onProfileSelectChange()" title="Only projects in this profile are shown"></select>
+                <button class="btn btn-small" title="Create a new profile" onclick="createProfilePrompt()">＋ New</button>
+                <button class="btn btn-small" title="Delete the selected profile (its projects move to Default)" onclick="deleteActiveProfile()">🗑</button>
+              </div>
+            </div>
+            <div class="pipeline-section" style="margin-top:12px">
               <label>Local Upload</label>
               <div style="display: flex; gap: 8px">
                 <input type="file" id="sourceUpload" accept=".mp3,.mp4,.wav,.m4a,.flac,.webm,video/*,audio/*" style="padding: 4px" />
@@ -1084,9 +1227,12 @@
 
       let lyricLines = [];
       let bgImageObj = null;
+      let bgObjectUrl = null;
       let selectedLrcFilename = "";
       let selectedAudioFilename = "";
       let selectedProjectName = "";
+      let activeProfile = localStorage.getItem("onepage-active-profile") || "Default";
+      let knownProfiles = ["Default"];
       let selectedBgFile = null;
       let lastCommittedLyricsText = "";
       let jobPollTimer = null;
@@ -1102,6 +1248,72 @@
       let lyricsRevisionCursorByAudio = {};
       let themeCatalog = [];
       let currentThemeId = "";
+      // Built-in themes so the picker always works even when the backend is
+      // unreachable or the themes/ folder is missing/empty. Keys mirror the
+      // :root CSS variables (without the leading --). Backend themes with the
+      // same id override these.
+      const BUILTIN_THEMES = [
+        {
+          id: "aurora", name: "Aurora (Default)",
+          description: "Built-in default", source_name: "Built-in",
+          vars: {
+            "bg-base": "#0b0c10", "bg-surface": "#1f2833", "bg-panel": "#161f28",
+            "border": "#45f3ff33", "text-main": "#c5c6c7", "text-muted": "#8fa7b2",
+            "accent": "#45f3ff", "accent-hover": "#66fcf1", "success": "#7dffb3",
+            "warning": "#ffcf66", "danger": "#ff8a80", "label-color": "#66fcf1",
+            "control-bg": "#111821", "control-fg": "#ffffff", "control-border": "#45f3ff66",
+            "button-bg": "#45f3ff", "button-fg": "#0b0c10", "button-hover-bg": "#66fcf1",
+            "button-small-fg": "#c5c6c7", "paper": "#ffffff", "ink": "#111111",
+            "canvas-bg": "#000000", "playhead": "#d71920", "shadow": "#000000",
+            "overlay-bg": "#0b0c10", "divider": "#ffffff", "active-glow": "#45f3ff", "radius": "6px",
+          },
+        },
+        {
+          id: "magenta-night", name: "Magenta Night",
+          description: "Built-in", source_name: "Built-in",
+          vars: {
+            "bg-base": "#0c0910", "bg-surface": "#241a2b", "bg-panel": "#1c1424",
+            "border": "#ff5cc833", "text-main": "#e6d3e0", "text-muted": "#b28fa7",
+            "accent": "#ff5cc8", "accent-hover": "#ff8ad8", "success": "#7dffb3",
+            "warning": "#ffcf66", "danger": "#ff8a80", "label-color": "#ff8ad8",
+            "control-bg": "#181019", "control-fg": "#ffffff", "control-border": "#ff5cc866",
+            "button-bg": "#ff5cc8", "button-fg": "#170310", "button-hover-bg": "#ff8ad8",
+            "button-small-fg": "#e6d3e0", "paper": "#ffffff", "ink": "#111111",
+            "canvas-bg": "#000000", "playhead": "#d71920", "shadow": "#000000",
+            "overlay-bg": "#0c0910", "divider": "#ffffff", "active-glow": "#ff5cc8", "radius": "6px",
+          },
+        },
+        {
+          id: "amber-studio", name: "Amber Studio",
+          description: "Built-in", source_name: "Built-in",
+          vars: {
+            "bg-base": "#100c07", "bg-surface": "#2b241a", "bg-panel": "#241c14",
+            "border": "#ffb34733", "text-main": "#e8ddcb", "text-muted": "#b2a08f",
+            "accent": "#ffb347", "accent-hover": "#ffc76b", "success": "#7dffb3",
+            "warning": "#ffcf66", "danger": "#ff8a80", "label-color": "#ffc76b",
+            "control-bg": "#191308", "control-fg": "#ffffff", "control-border": "#ffb34766",
+            "button-bg": "#ffb347", "button-fg": "#1a0d00", "button-hover-bg": "#ffc76b",
+            "button-small-fg": "#e8ddcb", "paper": "#ffffff", "ink": "#111111",
+            "canvas-bg": "#000000", "playhead": "#d71920", "shadow": "#000000",
+            "overlay-bg": "#100c07", "divider": "#ffffff", "active-glow": "#ffb347", "radius": "6px",
+          },
+        },
+        {
+          id: "emerald", name: "Emerald",
+          description: "Built-in", source_name: "Built-in",
+          vars: {
+            "bg-base": "#080f0b", "bg-surface": "#1a2b22", "bg-panel": "#14241c",
+            "border": "#38e08b33", "text-main": "#cbe8d8", "text-muted": "#8fb2a2",
+            "accent": "#38e08b", "accent-hover": "#5cf0a6", "success": "#7dffb3",
+            "warning": "#ffcf66", "danger": "#ff8a80", "label-color": "#5cf0a6",
+            "control-bg": "#0b1912", "control-fg": "#ffffff", "control-border": "#38e08b66",
+            "button-bg": "#38e08b", "button-fg": "#052012", "button-hover-bg": "#5cf0a6",
+            "button-small-fg": "#cbe8d8", "paper": "#ffffff", "ink": "#111111",
+            "canvas-bg": "#000000", "playhead": "#d71920", "shadow": "#000000",
+            "overlay-bg": "#080f0b", "divider": "#ffffff", "active-glow": "#38e08b", "radius": "6px",
+          },
+        },
+      ];
       let frontendDebugIssues = [];
       let lastDebugReportText = "";
       let previewWidth = 640;
@@ -1302,7 +1514,15 @@
               if (manualTimingState.enabled) alignManualTimingToCurrentPlayback();
               syncPlaybackUi();
             });
-            previewAudio.addEventListener('timeupdate', syncPlaybackUi);
+            // While playing, the requestAnimationFrame loop already repaints the
+            // canvas and waveform at up to 60fps, so timeupdate only refreshes the
+            // lightweight chrome (seek bar, time readout, timing HUD) to avoid
+            // repainting the same frame twice.
+            previewAudio.addEventListener('timeupdate', () => {
+              syncSeekBar();
+              displayTimeTracker();
+              updateManualTimingHud();
+            });
             previewAudio.addEventListener('error', () => {
               const source = previewAudio.currentSrc || previewAudio.src || "(empty source)";
               pushFrontendDebugIssue({
@@ -1525,13 +1745,28 @@
         return svg;
       }
 
+      let _placeholderCacheKey = "";
       function ensureKaraokePlaceholderImage() {
-        // Always regenerate to get fresh dynamic colors and animations
+        // Cache the placeholder and only regenerate when the theme colors change.
+        // Regenerating every frame used to spawn a new Image whose onload called
+        // updatePreview(), which drew another frame and spawned another Image — a
+        // self-perpetuating redraw loop that burned CPU while idle.
+        const key = [
+          getThemeColor("--bg-base", ""),
+          getThemeColor("--accent", ""),
+          getThemeColor("--success", ""),
+          getThemeColor("--warning", ""),
+          getThemeColor("--paper", ""),
+        ].join("|");
+        if (karaokePlaceholderImg && _placeholderCacheKey === key) {
+          return karaokePlaceholderImg;
+        }
         const svg = createDynamicMicrophoneSVG();
         const img = new Image();
         img.onload = () => updatePreview();
         img.src = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
         karaokePlaceholderImg = img;
+        _placeholderCacheKey = key;
         return karaokePlaceholderImg;
       }
 
@@ -1821,6 +2056,7 @@
         updateLyricsRevisionMeta();
       }
 
+
       async function clearAllLyricsTiming() {
         if (!selectedAudioFilename || !selectedLrcFilename) {
           setStatus("Select source media first.", true);
@@ -1916,6 +2152,33 @@
           .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, (_m, mm, ss, frac) => shift(_m, mm, ss, frac, "<", ">"));
       }
 
+      // Shift only the timestamps whose covered text intersects the editor
+      // selection [selStart, selEnd). A timestamp "covers" the text that follows
+      // it up to the next timestamp, so highlighting any word(s)/line(s) nudges
+      // exactly the stamps that govern the highlighted text.
+      function shiftLyricsTimestampsInSelection(content, deltaSeconds, selStart, selEnd) {
+        const tagRegex = /\[(\d+):(\d+)(?:\.(\d{1,3}))?\]|<(\d+):(\d+)(?:\.(\d{1,3}))?>/g;
+        const tags = [];
+        let match;
+        while ((match = tagRegex.exec(content)) !== null) {
+          tags.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+        }
+        if (!tags.length) return content;
+
+        let result = "";
+        let lastIndex = 0;
+        tags.forEach((tag, index) => {
+          const coverStart = tag.start;
+          const coverEnd = index + 1 < tags.length ? tags[index + 1].start : content.length;
+          const intersects = coverStart < selEnd && coverEnd > selStart;
+          result += content.slice(lastIndex, tag.start);
+          result += intersects ? shiftLyricsTimestamps(tag.text, deltaSeconds) : tag.text;
+          lastIndex = tag.end;
+        });
+        result += content.slice(lastIndex);
+        return result;
+      }
+
       async function shiftAllLyricsTiming(deltaSeconds) {
         if (!selectedAudioFilename || !selectedLrcFilename) {
           setStatus("Select source media first.", true);
@@ -1927,9 +2190,22 @@
           setStatus("This revision has no timing to shift.", true);
           return;
         }
-        const shiftedContent = shiftLyricsTimestamps(currentContent, deltaSeconds);
+        // If the user highlighted word(s)/line(s) in the editor, nudge only those
+        // timestamps; with no selection, nudge every timestamp (universal shift).
+        const selStart = editor.selectionStart;
+        const selEnd = editor.selectionEnd;
+        const hasSelection =
+          Number.isInteger(selStart) && Number.isInteger(selEnd) && selEnd > selStart;
+        const shiftedContent = hasSelection
+          ? shiftLyricsTimestampsInSelection(currentContent, deltaSeconds, selStart, selEnd)
+          : shiftLyricsTimestamps(currentContent, deltaSeconds);
         if (shiftedContent === currentContent) {
-          setStatus("All timestamps are already at 0:00; nothing to shift.", true);
+          setStatus(
+            hasSelection
+              ? "No shiftable timestamps in the highlighted selection."
+              : "All timestamps are already at 0:00; nothing to shift.",
+            true,
+          );
           return;
         }
 
@@ -1948,7 +2224,8 @@
         }
 
         const sign = deltaSeconds < 0 ? "-" : "+";
-        const label = `Universal ${sign}${_formatLrcStamp(Math.abs(deltaSeconds))} timing`;
+        const scope = hasSelection ? "Selection" : "Universal";
+        const label = `${scope} ${sign}${_formatLrcStamp(Math.abs(deltaSeconds))} timing`;
         addLyricsRevision(selectedAudioFilename, shiftedContent, label, {
           isNew: false,
           isCustomized: true,
@@ -1958,6 +2235,13 @@
         });
 
         editor.value = shiftedContent;
+        // Preserve the highlight so the user can keep pressing to nudge the same
+        // word(s)/line(s) without re-selecting each time.
+        if (hasSelection) {
+          const clampedEnd = Math.min(selEnd, shiftedContent.length);
+          const clampedStart = Math.min(selStart, clampedEnd);
+          try { editor.setSelectionRange(clampedStart, clampedEnd); } catch (e) {}
+        }
         lastCommittedLyricsText = shiftedContent;
         // The shifted text becomes the new baseline for manual S/F capture.
         manualTimingState.words = extractWordsFromEditor();
@@ -2171,9 +2455,9 @@
       // The toggle icon selects which voice the bar currently edits. Male is the
       // default scheme and is what ungendered lyrics render with.
       const genderColorSchemes = {
-        m: { p: "#ffffff", s: "#45f3ff", o: "#0b0c10" },
-        f: { p: "#ff7ec8", s: "#ffd6ec", o: "#3a0824" },
-        b: { p: "#ff4d4d", s: "#ffd0d0", o: "#2a0606" },
+        m: { p: "#afbcf0", s: "#366fe0", o: "#020512" },
+        f: { p: "#fab1db", s: "#960c5b", o: "#1a010f" },
+        b: { p: "#8ee084", s: "#17730d", o: "#041c01" },
       };
       let activeColorGender = "m";
       const GENDER_TOGGLE_ICON = { m: "♂", f: "♀", b: "⚥" };
@@ -2425,17 +2709,6 @@
         _loadLyricsRevisionByIndex(selectedAudioFilename, next);
       }
 
-      async function revertLyricsRevision() {
-        if (!selectedAudioFilename) { setStatus("Select a project first.", true); return; }
-        const history = getLyricsRevisionHistory(selectedAudioFilename);
-        if (history.length < 2) {
-          setStatus("No earlier committed revisions yet.", true);
-          return;
-        }
-        // Keep center button as "step backward once" for quick revert behavior.
-        stepLyricsRevision(-1);
-      }
-
       function toggleSection(sectionId, button) {
         const section = document.getElementById(sectionId);
         if (!section) return;
@@ -2549,19 +2822,12 @@
                 <input type="hidden" id="arcHeight" value="78" />
                 <input type="number" id="arcHeightNum" min="20" max="500" value="78" oninput="document.getElementById('arcHeight').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
               </div>
-              <div class="compact-ctrl" title="Arc Fraction (0.0-1.0)">
-                <span style="color: var(--text-muted)">Arc Timing</span>
-                <button class="step-btn" type="button" onpointerdown="startControlStep('arcFraction', 0.05, 0, 1, 'arcFractionNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
-                <button class="step-btn" type="button" onpointerdown="startControlStep('arcFraction', -0.05, 0, 1, 'arcFractionNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
-                <input type="hidden" id="arcFraction" value="0.35" />
-                <input type="number" id="arcFractionNum" min="0" max="1" step="0.05" value="0.35" oninput="document.getElementById('arcFraction').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
-              </div>
               <div class="compact-ctrl" title="Bounces Per Second During Gaps">
                 <span style="color: var(--text-muted)">Bounce Freq</span>
-                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', 0.05, 0.05, 0.5, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
-                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', -0.05, 0.05, 0.5, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', 0.05, 0.05, 5.0, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('bouncePerSec', -0.05, 0.05, 5.0, 'bouncePerSecNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
                 <input type="hidden" id="bouncePerSec" value="0.1" />
-                <input type="number" id="bouncePerSecNum" min="0.05" max="0.5" step="0.05" value="0.1" oninput="document.getElementById('bouncePerSec').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+                <input type="number" id="bouncePerSecNum" min="0.00" max="5.0" step="0.05" value="0.1" oninput="document.getElementById('bouncePerSec').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
               </div>
               <div class="compact-ctrl">
                 <span style="color: var(--text-muted)">Colors</span>
@@ -2570,6 +2836,20 @@
                 <label style="font-size: 10px; color: var(--text-muted); margin-left: 8px">Outline:</label>
                 <input type="color" id="ballOutlineColor" value="#000000" title="Ball Outline Color" oninput="updatePreview()" style="width: 30px; height: 24px; cursor: pointer;" />
               </div>
+              <div class="compact-ctrl" title="Icon Selection">
+              <span style="color: var(--text-muted)">Icon File</span>
+              <input type="text" id="ballIcon" onchange="updatePreview()" placeholder="/icons/myicon.png" style="width: 110px">
+              <input type="file" id="ballIconFile" accept="image/png,image/gif,image/webp,image/jpeg,image/bmp,image/x-icon,image/svg+xml,.png,.gif,.webp,.jpg,.jpeg,.bmp,.ico,.svg" style="display:none" onchange="uploadBallIcon(this)">
+              <button type="button" class="btn btn-small" title="Browse for a PNG image to use as the ball" onclick="document.getElementById('ballIconFile').click()">Browse…</button>
+              <button type="button" class="btn btn-small" title="Clear the icon and use the vector ball" onclick="clearBallIcon()">✕</button>
+              </div>
+                <div class="compact-ctrl" title="Spin Rotations per Hop">
+                <span style="color: var(--text-muted)">Rotations</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('ballRotation', 0.05, 0.05, 5, 'ballRotationNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('ballRotation', -0.05, 0.05, 5, 'ballRotationNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="ballRotation" value="0.1" />
+                <input type="number" id="ballRotationNum" min="0.00" max="5.0" step="0.05" value="0.1" oninput="document.getElementById('ballRotation').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+            </div>
             `;
             break;
 
@@ -2860,24 +3140,34 @@
       async function loadThemes() {
         const select = document.getElementById("themeSelect");
         if (!select) return;
+        const meta = document.getElementById("themeMeta");
+        // Start from the built-in themes so the picker is never empty, then try
+        // to merge in any backend-provided themes. Backend themes with a matching
+        // id override the built-in of the same id.
+        const byId = new Map(BUILTIN_THEMES.map((t) => [t.id, { ...t }]));
+        let backendNote = "";
         try {
           const { res, data } = await fetchJsonSafe("/api/themes", {}, "Themes API");
           if (!res.ok) throw new Error(data.message || `Themes API failed (HTTP ${res.status})`);
-          themeCatalog = (data.themes || []).sort((a, b) => a.name.localeCompare(b.name));
-          select.innerHTML = "";
-          themeCatalog.forEach((theme) => {
-            const opt = document.createElement("option");
-            opt.value = theme.id;
-            opt.textContent = theme.name;
-            select.appendChild(opt);
+          (data.themes || []).forEach((t) => {
+            if (t && t.id) byId.set(t.id, t);
           });
-          const preferred = localStorage.getItem(getThemeStorageKey()) || (themeCatalog[0] && themeCatalog[0].id) || "";
-          applyThemeById(preferred, false);
         } catch (err) {
-          themeCatalog = [];
-          select.innerHTML = '<option value="">Themes unavailable</option>';
-          document.getElementById("themeMeta").textContent = `Theme load failed: ${err}`;
+          console.warn("Backend themes unavailable, using built-in themes.", err);
+          backendNote = "Using built-in themes (backend theme catalog unavailable).";
         }
+        themeCatalog = Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+        select.innerHTML = "";
+        themeCatalog.forEach((theme) => {
+          const opt = document.createElement("option");
+          opt.value = theme.id;
+          opt.textContent = theme.name;
+          select.appendChild(opt);
+        });
+        const preferred = localStorage.getItem(getThemeStorageKey())
+          || (themeCatalog[0] && themeCatalog[0].id) || "";
+        applyThemeById(preferred, false);
+        if (backendNote && meta) meta.textContent = backendNote;
       }
 
       function formatDebugIssue(issue) {
@@ -2971,6 +3261,7 @@
         fd.append("whisper_device", document.getElementById("whisperDevice").value);
         fd.append("whisper_model", document.getElementById("whisperModel").value);
         fd.append("transcription_language", document.getElementById("transcriptionLanguage").value);
+        fd.append("profile", activeProfile);
       }
 
       function capturePreviewConfig() {
@@ -3012,12 +3303,13 @@
           render_device: document.getElementById("renderDevice").value,
           ball_radius: document.getElementById("ballRadius")?.value || "26",
           arc_height: document.getElementById("arcHeight")?.value || "78",
-          arc_fraction: document.getElementById("arcFraction")?.value || "0.35",
           bounce_per_sec: document.getElementById("bouncePerSec")?.value || "0.1",
           ball_color: document.getElementById("ballColor")?.value || "#ffffff",
           ball_outline_color: document.getElementById("ballOutlineColor")?.value || "#000000",
-        };
-      }
+          ball_icon: document.getElementById("ballIcon")?.value || "",
+          ball_rotation: parseFloat(document.getElementById("ballRotation")?.value || "1.5"),
+      };
+    }
 
       let controlStepTimer = null;
       let controlStepState = null;
@@ -3051,90 +3343,6 @@
         controlStepState = null;
       }
 
-      // ================================================================
-      // SECTION: (DISABLED) Panel Dragging & Reordering
-      // Purpose: Was used to allow panels to be dragged/reordered
-      //          Currently disabled - panels stay in fixed grid layout
-      // ================================================================
-
-      function enablePanelDragging() {
-        // Enable dragging for all cards by their title bar (.section-toggle)
-        // Panels can be dragged freely but won't stack on top of each other
-        const allPanels = Array.from(document.querySelectorAll(".card"));
-        const dragThreshold = 6;
-        let maxZIndex = 10000;
-        const panelZIndices = new Map();
-
-        allPanels.forEach((panel) => {
-          panelZIndices.set(panel, 1000 + allPanels.indexOf(panel));
-        });
-
-        allPanels.forEach((panel) => {
-          const handle = panel.querySelector(":scope > .section-toggle");
-          if (!handle) return;
-
-          handle.addEventListener("click", (event) => {
-            if (handle.dataset.justDragged === "1") {
-              delete handle.dataset.justDragged;
-              event.preventDefault();
-              event.stopImmediatePropagation();
-            }
-          }, true);
-
-          handle.addEventListener("pointerdown", (event) => {
-            if (event.button !== 0) return;
-            const startRect = panel.getBoundingClientRect();
-            const pointerOffsetX = event.clientX - startRect.left;
-            const pointerOffsetY = event.clientY - startRect.top;
-            const startX = event.clientX;
-            const startY = event.clientY;
-            let dragging = false;
-
-            const beginDrag = () => {
-              dragging = true;
-              handle.setPointerCapture(event.pointerId);
-              document.body.classList.add("panel-drag-active");
-              panel.classList.add("panel-dragging");
-              panel.style.position = "fixed";
-              panel.style.left = `${startRect.left}px`;
-              panel.style.top = `${startRect.top}px`;
-              panel.style.width = `${startRect.width}px`;
-
-              // Increment z-index so this panel comes to front, don't stack
-              maxZIndex += 1;
-              panelZIndices.set(panel, maxZIndex);
-              panel.style.zIndex = maxZIndex;
-            };
-
-            const move = (moveEvent) => {
-              if (!dragging) {
-                if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < dragThreshold) return;
-                moveEvent.preventDefault();
-                beginDrag();
-              }
-              panel.style.left = `${moveEvent.clientX - pointerOffsetX}px`;
-              panel.style.top = `${moveEvent.clientY - pointerOffsetY}px`;
-            };
-
-            const stop = () => {
-              handle.releasePointerCapture?.(event.pointerId);
-              window.removeEventListener("pointermove", move);
-              window.removeEventListener("pointerup", stop);
-              window.removeEventListener("pointercancel", stop);
-              document.body.classList.remove("panel-drag-active");
-              if (dragging) {
-                handle.dataset.justDragged = "1";
-                panel.classList.remove("panel-dragging");
-              }
-            };
-
-            window.addEventListener("pointermove", move);
-            window.addEventListener("pointerup", stop);
-            window.addEventListener("pointercancel", stop);
-          });
-        });
-      }
-
       function formatLrcTime(seconds) {
         const safe = Math.max(0, Number(seconds || 0));
         const mins = Math.floor(safe / 60);
@@ -3145,6 +3353,9 @@
       function extractWordsFromEditor() {
         const editorText = document.getElementById("lyricsEditor").value || "";
         const stripped = editorText
+          // Drop the manual chorus star ([00:12.34]*word) first so it never
+          // survives as a leading '*' on the word in the timing preview.
+          .replace(/(\[\d+:\d+(?:\.\d{1,3})?\])\s*\*/g, "$1")
           .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ")
           .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ")
           .replace(/\{[mfb]\}/g, " ");
@@ -3159,6 +3370,7 @@
         editorText.split("\n").forEach((line) => {
           const gender = getLineGender(line);
           const words = line
+            .replace(/(\[\d+:\d+(?:\.\d{1,3})?\])\s*\*/g, "$1")
             .replace(/\[(\d+):(\d+)(?:\.(\d{1,3}))?\]/g, " ")
             .replace(/<(\d+):(\d+)(?:\.(\d{1,3}))?>/g, " ")
             .replace(/\{[mfb]\}/g, " ")
@@ -3264,7 +3476,10 @@
       async function toggleManualTiming() {
         if (!selectedAudioFilename) { alert("Select source media first."); return; }
         manualTimingState.enabled = !manualTimingState.enabled;
-        document.getElementById("manualTimingBtn").textContent = manualTimingState.enabled ? "Timing Mode is ON" : "Enable Timing Mode";
+        const manualBtn = document.getElementById("manualTimingBtn");
+        manualBtn.textContent = manualTimingState.enabled ? "Timing Mode is ON" : "Timing Mode is OFF";
+        manualBtn.classList.toggle("timing-on", manualTimingState.enabled);
+        manualBtn.classList.toggle("timing-off", !manualTimingState.enabled);
         if (manualTimingState.enabled) {
           const existing = manualTimingByAudio[selectedAudioFilename];
           if (existing && Array.isArray(existing.baselineEntries)) {
@@ -3835,6 +4050,18 @@
         if (res.ok) { input.value = ""; await loadFileManifest(); await loadJobs(); }
       }
 
+      async function clearInactiveJobs() {
+        try {
+            const response = await fetch('/api/jobs/clear', { method: 'POST' });
+            if (!response.ok) throw new Error("Failed to clear jobs");
+
+            // If you have a function that manually fetches and renders jobs (e.g., fetchJobs()), call it here.
+            // Otherwise, the UI will update automatically on the next UI polling tick.
+        } catch (error) {
+            console.error("[Job Cleanup] Error clearing jobs:", error);
+        }
+      }
+
       async function submitSourceUrl() {
         const url = document.getElementById("sourceUrl").value.trim();
         if (!url) { alert("Paste a URL."); return; }
@@ -3892,10 +4119,127 @@
         }
       }
 
+      // Derive the project folder name from a profile-qualified path
+      // ("profile/project/file" -> "project"). Falls back gracefully.
+      function projectNameFromPath(pathLike) {
+        const parts = String(pathLike || "").split("/").filter(Boolean);
+        if (parts.length >= 2) return parts[parts.length - 2];
+        return (parts[0] || "").replace(/\.[^/.]+$/, "");
+      }
+
+      // Directory portion of a profile-qualified audio path ("profile/project").
+      function projectDirFromPath(pathLike) {
+        const parts = String(pathLike || "").split("/").filter(Boolean);
+        if (parts.length >= 2) return parts.slice(0, -1).join("/");
+        return "";
+      }
+
+      function renderProfileOptions() {
+        const select = document.getElementById("profileSelect");
+        if (!select) return;
+        select.innerHTML = "";
+        knownProfiles.forEach((name) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          if (name === activeProfile) opt.selected = true;
+          select.appendChild(opt);
+        });
+      }
+
+      async function loadProfiles() {
+        try {
+          const { res, data } = await fetchJsonSafe("/api/profiles", {}, "Profiles API");
+          if (!res.ok) throw new Error(data.message || "Profiles API failed");
+          knownProfiles = Array.isArray(data.profiles) && data.profiles.length ? data.profiles : ["Default"];
+          if (!knownProfiles.includes(activeProfile)) {
+            activeProfile = data.active || knownProfiles[0] || "Default";
+            localStorage.setItem("onepage-active-profile", activeProfile);
+          }
+          renderProfileOptions();
+        } catch (err) {
+          knownProfiles = ["Default"];
+          activeProfile = "Default";
+          renderProfileOptions();
+        }
+      }
+
+      async function onProfileSelectChange() {
+        const select = document.getElementById("profileSelect");
+        const chosen = select ? select.value : activeProfile;
+        if (!chosen || chosen === activeProfile) return;
+        activeProfile = chosen;
+        localStorage.setItem("onepage-active-profile", activeProfile);
+        try {
+          const fd = new FormData();
+          fd.append("name", activeProfile);
+          await fetch("/api/profiles/active", { method: "POST", body: fd });
+        } catch (err) { /* non-fatal */ }
+        setStatus(`Switched to profile: ${activeProfile}`);
+        await loadFileManifest();
+      }
+
+      async function createProfilePrompt() {
+        const name = prompt("New profile name:", "");
+        if (name === null) return;
+        const trimmed = name.trim();
+        if (!trimmed) { setStatus("Profile creation cancelled: empty name.", true); return; }
+        const fd = new FormData();
+        fd.append("name", trimmed);
+        const res = await fetch("/api/profiles", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) { setStatus(data.message || "Could not create profile.", true); return; }
+        knownProfiles = data.profiles || knownProfiles;
+        activeProfile = data.created || trimmed;
+        localStorage.setItem("onepage-active-profile", activeProfile);
+        try {
+          const af = new FormData(); af.append("name", activeProfile);
+          await fetch("/api/profiles/active", { method: "POST", body: af });
+        } catch (err) { /* non-fatal */ }
+        renderProfileOptions();
+        setStatus(data.message || `Profile '${activeProfile}' created.`);
+        await loadFileManifest();
+      }
+
+      async function deleteActiveProfile() {
+        if (activeProfile === "Default") { setStatus("The Default profile cannot be deleted.", true); return; }
+        if (!confirm(`Delete profile "${activeProfile}"? Its projects will be moved to Default.`)) return;
+        const fd = new FormData();
+        fd.append("name", activeProfile);
+        const res = await fetch("/api/profiles/delete", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) { setStatus(data.message || "Could not delete profile.", true); return; }
+        knownProfiles = data.profiles || ["Default"];
+        activeProfile = data.active || "Default";
+        localStorage.setItem("onepage-active-profile", activeProfile);
+        renderProfileOptions();
+        setStatus(data.message || "Profile deleted.");
+        await loadFileManifest();
+      }
+
+      async function transferProject(audioFilename, mode, targetProfile) {
+        if (!audioFilename || !targetProfile) return;
+        const verb = mode === "move" ? "Moving" : "Copying";
+        setStatus(`${verb} project to ${targetProfile}...`);
+        const fd = new FormData();
+        fd.append("audio_filename", audioFilename);
+        fd.append("target_profile", targetProfile);
+        fd.append("mode", mode);
+        const res = await fetch("/api/transfer-project", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) { setStatus(data.message || "Transfer failed.", true); await loadFileManifest(); return; }
+        if (mode === "move" && selectedAudioFilename === audioFilename) {
+          selectedAudioFilename = selectedLrcFilename = selectedProjectName = "";
+        }
+        setStatus(data.message || "Transfer complete.");
+        await loadFileManifest();
+        await loadJobs();
+      }
+
       async function loadFileManifest(retryCount = 0) {
         const container = document.getElementById("file-vault");
         try {
-          const { res, data } = await fetchJsonSafe("/api/list-files?sources_only=true", {}, "Media vault API");
+          const { res, data } = await fetchJsonSafe(`/api/list-files?sources_only=true&profile=${encodeURIComponent(activeProfile)}`, {}, "Media vault API");
           if (!res.ok) throw new Error(data.message || `Media vault API failed (HTTP ${res.status})`);
           container.innerHTML = "";
           if (!data.files || data.files.length === 0) { container.textContent = "No media found."; return; }
@@ -3919,6 +4263,33 @@
               <button class="btn btn-small vault-btn" style="border-color:var(--danger); color:var(--danger);" data-action="remove" title="Delete this project and all files">Remove</button>
             </div>`;
             if (selectedAudioFilename === f.audio_filename) row.classList.add("file-row-active");
+            const otherProfiles = knownProfiles.filter((p) => p !== activeProfile);
+            if (otherProfiles.length) {
+              const actions = row.querySelector(".file-row-actions");
+              const transfer = document.createElement("select");
+              transfer.className = "btn btn-small vault-btn";
+              transfer.title = "Copy or move this project to another profile";
+              transfer.style.maxWidth = "120px";
+              const head = document.createElement("option");
+              head.value = ""; head.textContent = "Send to…"; head.selected = true;
+              transfer.appendChild(head);
+              otherProfiles.forEach((p) => {
+                const c = document.createElement("option");
+                c.value = `copy:${p}`; c.textContent = `Copy → ${p}`;
+                transfer.appendChild(c);
+                const m = document.createElement("option");
+                m.value = `move:${p}`; m.textContent = `Move → ${p}`;
+                transfer.appendChild(m);
+              });
+              transfer.addEventListener("change", () => {
+                const val = transfer.value;
+                transfer.value = "";
+                if (!val) return;
+                const [mode, target] = val.split(":");
+                transferProject(f.audio_filename, mode, target);
+              });
+              actions.appendChild(transfer);
+            }
             row.querySelector('[data-action="use"]').addEventListener("click", () => stageTrackTarget(f.url, f.audio_filename, f.project_name, f.lrc_filename || ""));
             row.querySelector('[data-action="export"]').addEventListener("click", () => {
               setStatus(`Exporting ${projectLabel}...`);
@@ -3941,7 +4312,7 @@
       }
 
       async function beginRenameMedia(filename, currentProjectName = "") {
-        const current = currentProjectName || filename.split("/")[0] || filename.replace(/\.[^/.]+$/, "");
+        const current = currentProjectName || projectNameFromPath(filename) || filename.replace(/\.[^/.]+$/, "");
         const proposed = prompt("Rename project:", current);
         if (proposed === null) return;
         const trimmed = proposed.trim();
@@ -4001,7 +4372,7 @@
       }
 
       async function deleteMediaAsset(filename, projectName = "") {
-        const label = projectName || (filename || "").split("/")[0] || filename;
+        const label = projectName || projectNameFromPath(filename) || filename;
         if (!confirm(`Are you sure you want to remove this project: ${label}?`)) return;
         const fd = new FormData(); fd.append("audio_filename", filename);
         const res = await fetch("/api/delete-media", { method: "POST", body: fd });
@@ -4023,7 +4394,7 @@
       async function stageTrackTarget(audioUrl, filename, projectName = "", lrcFilename = "") {
         if (manualTimingState.enabled) persistManualTiming();
         selectedAudioFilename = filename;
-        selectedProjectName = projectName || (filename || "").split("/")[0] || "";
+        selectedProjectName = projectName || projectNameFromPath(filename) || "";
         loadVocalWaveform(filename);
         audio.pause();
         audio.removeAttribute("src");
@@ -4215,10 +4586,11 @@
           applyThemeById(state.uiThemeId, false);
         }
 
-        if ((preview.bgType || "") === "image" && selectedProjectName) {
+        if ((preview.bgType || "") === "image" && selectedAudioFilename) {
+          const dir = projectDirFromPath(selectedAudioFilename);
           const cached = new Image();
           cached.onload = () => { bgImageObj = cached; updatePreview(); };
-          cached.src = `/files/${encodeURIComponent(selectedProjectName)}/custom_bg.jpg`;
+          cached.src = `/files/${encodeURIComponent(dir).replace(/%2F/g, "/")}/custom_bg.png`;
         }
 
         applyPreviewAudioTuning();
@@ -4330,12 +4702,24 @@
         await loadFileManifest();
       }
 
+      // Show the Suno song-link field only when the Suno provider is selected.
+      function onLyricsProviderChange() {
+        const provider = document.getElementById("lyricsProvider")?.value || "auto";
+        const field = document.getElementById("sunoUrl");
+        if (field) field.style.display = provider === "suno" ? "block" : "none";
+      }
+
       async function autoGrabLyrics() {
         if (!selectedAudioFilename) { alert("Select media first."); return; }
         const provider = (document.getElementById("lyricsProvider")?.value || "auto").trim();
         const fd = new FormData();
         fd.append("audio_filename", selectedAudioFilename);
         fd.append("provider", provider);
+        if (provider === "suno") {
+          const sunoUrl = (document.getElementById("sunoUrl")?.value || "").trim();
+          if (!sunoUrl) { setStatus("Paste a Suno song link or ID first.", true); return; }
+          fd.append("suno_url", sunoUrl);
+        }
         setStatus(`Queuing lyrics Pull via ${provider}...`);
         const res = await fetch("/api/auto-grab-lyrics", { method: "POST", body: fd });
         const data = await res.json();
@@ -4347,6 +4731,80 @@
           await loadFileManifest();
         }
         setStatus(data.message || (res.ok ? "Lyrics job queued." : "Fetch failed."), !res.ok);
+      }
+
+      async function uploadLrcFile(input) {
+        const file = input?.files?.[0];
+        if (!file) return;
+        if (!selectedAudioFilename || !selectedLrcFilename) {
+          setStatus("Mount media first, then upload an LRC.", true);
+          input.value = "";
+          return;
+        }
+        try {
+          const text = await file.text();
+          document.getElementById("lyricsEditor").value = text;
+          lastCommittedLyricsText = text;
+          parseLrcData(text);
+          renderChorusOverlay();
+          updateLyricsReadyIndicator();
+          const fd = new FormData();
+          fd.append("filename", selectedLrcFilename);
+          fd.append("content", text);
+          const res = await fetch("/api/save-lyrics", { method: "POST", body: fd });
+          if (res.ok) {
+            const meta = {
+              provider: "uploaded",
+              isNew: false,
+              isCustomized: true,
+              modifiedAt: Date.now(),
+              timingLevel: detectLyricsTimingLevel(text),
+              timestampCount: countTimestamps(text)
+            };
+            addLyricsRevision(selectedAudioFilename, text, "upload", meta);
+            updatePreview();
+            setStatus(`Loaded lyrics from ${file.name}.`);
+          } else {
+            setStatus("Failed to save uploaded LRC.", true);
+          }
+        } catch (err) {
+          setStatus(`LRC upload failed: ${err}`, true);
+        } finally {
+          input.value = "";
+        }
+      }
+
+      async function uploadBallIcon(input) {
+        const fileEl = input || document.getElementById("ballIconFile");
+        const file = fileEl?.files?.[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file);
+        setStatus(`Uploading icon ${file.name}...`);
+        try {
+          const res = await fetch("/api/upload-icon", { method: "POST", body: fd });
+          const data = await res.json();
+          if (res.ok && data.path) {
+            const iconField = document.getElementById("ballIcon");
+            if (iconField) iconField.value = data.path;
+            updatePreview();
+            setStatus(`Icon ready: ${data.filename}. It replaces the ball in the preview.`);
+          } else {
+            setStatus(data.message || "Icon upload failed.", true);
+          }
+        } catch (err) {
+          setStatus(`Icon upload failed: ${err}`, true);
+        } finally {
+          fileEl.value = "";
+        }
+      }
+
+      function clearBallIcon() {
+        const iconField = document.getElementById("ballIcon");
+        if (iconField) iconField.value = "";
+        const fileEl = document.getElementById("ballIconFile");
+        if (fileEl) fileEl.value = "";
+        updatePreview();
       }
 
       async function autoTranscribe() {
@@ -4490,9 +4948,11 @@
       function handleBgUpload(event) {
         const file = event.target.files[0];
         if (file) {
+          if (bgObjectUrl) { URL.revokeObjectURL(bgObjectUrl); bgObjectUrl = null; }
           bgImageObj = new Image();
           bgImageObj.onload = () => { updatePreview(); };
-          bgImageObj.src = URL.createObjectURL(file);
+          bgObjectUrl = URL.createObjectURL(file);
+          bgImageObj.src = bgObjectUrl;
           document.getElementById("bgType").value = "image";
           if (selectedAudioFilename) {
             const fd = new FormData();
@@ -4690,7 +5150,6 @@
       }
 
       function updatePreview() { drawFrame(audio.currentTime || 0); }
-      function renderLoop() { if (!audio.paused) { drawFrame(audio.currentTime || 0); requestAnimationFrame(renderLoop); } }
 
       let smoothScrollY = 0; // State variable for Continuous Scroll Mode
 
@@ -4700,10 +5159,9 @@
 
       // Use the frame time being rendered so the preview stays consistent with
       // drawFrame(); fall back to the live element only if it wasn't provided.
-      const audioEl = document.getElementById("previewAudio");
       const currentTime = Number.isFinite(frameTime)
         ? frameTime
-        : (audioEl ? audioEl.currentTime : 0);
+        : (audio ? audio.currentTime : 0);
 
       let x = cx - tokens.reduce((s, t, i) => s + ctx.measureText(t.text).width + (i > 0 ? spaceW : 0), 0) / 2;
       const positions = [];
@@ -4787,7 +5245,6 @@
 
             // Get bouncing ball settings from UI
             const arcHeight = parseFloat(document.getElementById("arcHeight")?.value || "78");
-            const arcFraction = parseFloat(document.getElementById("arcFraction")?.value || "0.35");
             const bouncePerSec = parseFloat(document.getElementById("bouncePerSec")?.value || "0.1");
 
             const flightProgress = activeIndex >= 0
@@ -4796,10 +5253,19 @@
             const ballX = previous + ((target - previous) * flightProgress);
             const arc = Math.sin(flightProgress * Math.PI) * (arcHeight / 10);
             const idleBounce = activeIndex < 0 ? Math.abs(Math.sin(currentTime * Math.PI * bouncePerSec * 2)) * (arcHeight / 15) : 0;
-              const priority = activeIndex >= 0 ? 2 : 1;
-              if (!bouncingBallCandidate || priority >= bouncingBallCandidate.priority) {
-                bouncingBallCandidate = { x: ballX, y: y - 30 - arc - idleBounce, color: pColor, priority };
-              }
+            const priority = activeIndex >= 0 ? 2 : 1;
+            if (!bouncingBallCandidate || priority >= bouncingBallCandidate.priority) {
+              const selectedIcon = document.getElementById("ballIcon")?.value || "";
+              const ballRotation = parseFloat(document.getElementById("ballRotation")?.value || "1.5");
+              bouncingBallCandidate = {
+                x: ballX,
+                y: y - 30 - arc - idleBounce,
+                color: pColor,
+                priority,
+                icon: selectedIcon,
+                rotation: currentTime * Math.PI * 2 * ballRotation
+              };
+            }
           }
         }
   }
@@ -4912,6 +5378,18 @@
             });
           }
           if (activeIdx < 0) activeIdx = 0;
+        }
+
+        // Timing mode: keep the view parked on the word the user is about to time
+        // (the cursor), so playback never scrolls the karaoke ahead of them. The
+        // page waits here until they press S/F to advance the cursor.
+        if (manualTimingState.enabled) {
+          const cur = manualTimingState.cursor;
+          let cursorLine = -1;
+          for (let i = 0; i < allLines.length; i++) {
+            if (allLines[i].some((t) => t.isManual && t.idx === cur)) { cursorLine = i; break; }
+          }
+          activeIdx = cursorLine >= 0 ? cursorLine : Math.max(0, allLines.length - 1);
         }
 
         if (allLines.length === 0) {
@@ -5031,22 +5509,41 @@
           ctx.fillText("No timed lyrics loaded yet", cx - ctx.measureText("No timed lyrics loaded yet").width / 2, cy);
         }
         if (bouncingBallCandidate) {
-          ctx.save();
-          const ballRadius = parseFloat(document.getElementById("ballRadius")?.value || "26") * layoutScale;
-          const ballColor = document.getElementById("ballColor")?.value || "#ffffff";
-          const ballOutlineColor = document.getElementById("ballOutlineColor")?.value || "#000000";
+          const size = parseInt(document.getElementById("ballRadius")?.value || "26") * 2.5;
 
-          // Draw ball fill
-          ctx.fillStyle = ballColor;
-          ctx.beginPath();
-          ctx.arc(bouncingBallCandidate.x, bouncingBallCandidate.y, ballRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Draw ball outline
-          ctx.strokeStyle = ballOutlineColor;
-          ctx.lineWidth = Math.max(1, Math.round(2 * layoutScale));
-          ctx.stroke();
-          ctx.restore();
+          if (bouncingBallCandidate.icon) {
+            // Cache decoded icon images by src so we don't allocate a new Image()
+            // (and re-trigger onload -> updatePreview loops) on every 50fps frame.
+            const cache = (window.__ballIconImgCache ||= {});
+            let img = cache[bouncingBallCandidate.icon];
+            if (!img) {
+              img = new Image();
+              img.onload = () => updatePreview();
+              img.src = bouncingBallCandidate.icon;
+              cache[bouncingBallCandidate.icon] = img;
+            }
+            if (img.complete && img.naturalWidth > 0) {
+              // Preserve aspect ratio inside the size x size box (fit-inside),
+              // centred on the ball position — matches the FFmpeg overlay which
+              // scales with force_original_aspect_ratio=decrease then pads to square.
+              const nw = img.naturalWidth, nh = img.naturalHeight;
+              const fit = Math.min(size / nw, size / nh);
+              const dw = nw * fit, dh = nh * fit;
+              const ang = bouncingBallCandidate.rotation || 0;
+              ctx.save();
+              ctx.translate(bouncingBallCandidate.x, bouncingBallCandidate.y);
+              ctx.rotate(ang);
+              ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+              ctx.restore();
+            }
+          } else {
+            // ... Keep your existing vector drawing logic here for the standard ball
+            ctx.beginPath();
+            ctx.arc(bouncingBallCandidate.x, bouncingBallCandidate.y, size/2.5, 0, Math.PI * 2);
+            ctx.fillStyle = bouncingBallCandidate.color;
+            ctx.fill();
+            ctx.stroke();
+          }
         }
       }
 
@@ -5433,12 +5930,6 @@
           applyDockAssignments();
         } catch (e) {}
 
-        // Reset drag bookkeeping so the next drag starts from a clean stack.
-        try {
-          if (typeof panelZIndices !== "undefined" && panelZIndices) panelZIndices.clear();
-          if (typeof maxZIndex !== "undefined") maxZIndex = 10;
-        } catch (e) {}
-
         // Drop any persisted layout state.
         try {
           Object.keys(localStorage).forEach((k) => {
@@ -5498,7 +5989,6 @@
 
       onPreviewResolutionChange();
       applyControlContrastVars();
-      // enablePanelDragging(); // DISABLED: Panels stay locked in grid
       onFontSizeChanged(); updateManualTimingHud();
       initPreviewControlsAutoFade();
       initMobileMode();
@@ -5520,7 +6010,7 @@
       // Load supplementary data in background
       setTimeout(() => { loadFonts(); }, 500);
       setTimeout(() => { loadThemes(); }, 600);
-      setTimeout(() => { loadFileManifest(); }, 700);
+      setTimeout(async () => { await loadProfiles(); await loadFileManifest(); }, 700);
     </script>
 </body>
 </html>
