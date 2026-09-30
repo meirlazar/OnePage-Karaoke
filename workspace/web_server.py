@@ -41,15 +41,29 @@ OUTPUT_DIR = WORKSPACE / "output"
 FONTS_DIR = WORKSPACE / "fonts"
 SERVED_FONTS_DIR = WORKSPACE / ".served-fonts"
 THEMES_DIR = WORKSPACE / "themes"
+ICONS_DIR = WORKSPACE / "icons"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 SERVED_FONTS_DIR.mkdir(parents=True, exist_ok=True)
 THEMES_DIR.mkdir(parents=True, exist_ok=True)
+ICONS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------
+# Media Vault profiles: projects live under output/<profile>/<project>/.
+# A JSON registry tracks known profile names and the active profile so the
+# whole app agrees on where new projects are placed and which ones to list.
+# ---------------------------------------------------------------
+DEFAULT_PROFILE = "Default"
+PROFILES_FILE = OUTPUT_DIR / ".profiles.json"
+# Top-level names under output/ that are NOT profiles (legacy/system folders).
+RESERVED_OUTPUT_NAMES = {"stems"}
 
 app.mount("/files", StaticFiles(directory=str(OUTPUT_DIR)), name="files")
 app.mount("/fonts", StaticFiles(directory=str(SERVED_FONTS_DIR)), name="fonts")
 app.mount("/themes", StaticFiles(directory=str(THEMES_DIR)), name="themes")
+app.mount("/icons", StaticFiles(directory=str(ICONS_DIR)), name="icons")
+
 
 logger = logging.getLogger("onepage-karaoke")
 if not logger.handlers:
@@ -60,7 +74,7 @@ if not logger.handlers:
 
 ACTIVE_PROCESSING_CACHE = set()
 JOB_LOCK = threading.Lock()
-JOB_QUEUE = []
+JOB_QUEUE = deque()
 JOBS = {}
 RUNNING_PROCESSES = {}
 RENAME_LOCK = threading.RLock()
@@ -78,6 +92,11 @@ SUPPORTED_AUDIO_EXTS = {
     ".mp4",
 }
 METUBE_URL = "http://metube:8081"
+# Pulling (source ingest + lyrics fetch) is a MANUAL-ONLY action: it must be triggered
+# from the UI buttons (Pull / Pull Lyrics / Upload). The background project watcher must
+# never auto-enqueue ingest or lyrics jobs on its own. Flip to True to restore the old
+# automatic behavior.
+AUTO_PULL_ENABLED = False
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "/usr/bin/ffmpeg")
 DERIVED_NAME_MARKERS = (
     "_karaoke",
@@ -129,6 +148,7 @@ _WORD_END_TAG_RE = re.compile(r"<\d{1,3}:\d{1,2}(?:\.\d{1,3})?>")
 #          status tracking for async operations
 # ===============================================================
 
+
 class JobCancelledError(RuntimeError):
     pass
 
@@ -138,6 +158,7 @@ class JobCancelledError(RuntimeError):
 # Purpose: Clean up heap memory, garbage collection, and
 #          resource allocation for long-running processes
 # ===============================================================
+
 
 def _trim_process_heap() -> None:
     try:
@@ -208,7 +229,6 @@ def _job_view(job: dict) -> dict:
         "progress": job["progress"],
         "message": job["message"],
         "created_at": job["created_at"],
-        "updated_at": job["updated_at"],
         "audio_filename": job.get("audio_filename", ""),
         "project_name": job.get("project_name", ""),
         "cancel_requested": job.get("cancel_requested", False),
@@ -372,6 +392,7 @@ def _serialize_faster_whisper_payload(segments, info) -> dict:
 #          with word-level timing and multiple language support
 # ===============================================================
 
+
 def _transcribe_with_faster_whisper(
     audio_path: Path,
     *,
@@ -420,6 +441,7 @@ def _run_faster_whisper_with_fallback(
     initial_prompt: str = "",
 ) -> tuple[dict, str, str]:
     preferred_device = _effective_ai_device(whisper_device)
+    project_name = audio_path.parent.name
     attempts = [preferred_device]
     if preferred_device == "cuda":
         attempts.append("cpu")
@@ -684,9 +706,11 @@ def _choose_best_identity(downloaded: Path, expected: dict) -> dict:
     return actual
 
 
-def _move_audio_into_project(audio_path: Path, project_name: str) -> Path:
+def _move_audio_into_project(
+    audio_path: Path, project_name: str, profile: str = ""
+) -> Path:
     safe_project = _safe_project_name(project_name, fallback=audio_path.stem)
-    project_dir = OUTPUT_DIR / safe_project
+    project_dir = _profile_root(profile) / safe_project
     if not project_dir.exists():
         project_dir.mkdir(parents=True, exist_ok=True)
     elif project_dir.is_file():
@@ -806,6 +830,7 @@ def _update_job(job_id: str, **updates) -> dict | None:
         return dict(job)
 
 
+
 def _workspace_relative_path(path_like: str | Path) -> str:
     try:
         path = Path(path_like).resolve()
@@ -899,16 +924,28 @@ def _collect_runtime_issues() -> list[dict]:
 
 def _load_theme_catalog() -> list[dict]:
     themes = []
-    for path in sorted(THEMES_DIR.glob("*.json")):
+    skipped = 0
+    files = sorted(THEMES_DIR.glob("*.json"))
+    for path in files:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            skipped += 1
+            logger.warning("[THEMES] Skipped unreadable theme %s: %s", path.name, exc)
             continue
         if not isinstance(payload, dict):
+            skipped += 1
+            logger.warning("[THEMES] Skipped %s: JSON root is not an object.", path.name)
             continue
         theme_id = str(payload.get("id") or path.stem)
         vars_payload = payload.get("vars") or {}
         if not isinstance(vars_payload, dict) or not vars_payload:
+            skipped += 1
+            logger.warning(
+                "[THEMES] Skipped %s: missing/empty 'vars' object (theme files need a "
+                "\"vars\": { \"bg-base\": \"#...\", ... } map).",
+                path.name,
+            )
             continue
         themes.append(
             {
@@ -921,6 +958,10 @@ def _load_theme_catalog() -> list[dict]:
                 "vars": vars_payload,
             }
         )
+    logger.info(
+        "[THEMES] %s theme(s) loaded, %s skipped from %s",
+        len(themes), skipped, THEMES_DIR,
+    )
     return themes
 
 
@@ -939,7 +980,11 @@ def _find_active_job_by_key(target_key: str) -> dict | None:
 
 
 def _has_active_job_for_audio(rel_audio: str, project_name: str = "") -> bool:
-    for job in JOBS.values():
+    # Snapshot under the lock: worker threads mutate JOBS concurrently, so iterating
+    # it unlocked risks a "dictionary changed size during iteration" crash.
+    with JOB_LOCK:
+        jobs_snapshot = list(JOBS.values())
+    for job in jobs_snapshot:
         if job.get("status") not in {"queued", "running"}:
             continue
         if rel_audio and job.get("audio_filename") == rel_audio:
@@ -1194,7 +1239,7 @@ def _build_residual_instrumental(
 
 
 def _ensure_residual_instrumental(
-    project_dir: Path, audio_path: Path, base_name: str
+    project_dir: Path, audio_path: Path, base_name: str, job_id: str = ""
 ) -> None:
     """Upgrade a project's instrumental to the residual mix if it predates it.
 
@@ -1211,6 +1256,12 @@ def _ensure_residual_instrumental(
     if not (vocals_wav and vocals_wav.exists() and audio_path.exists()):
         return
     rebuilt = project_dir / f"{base_name}_minus.residual.mp3"
+    if job_id:
+        _update_job(
+            job_id,
+            stage="audio prep",
+            message=f"Rebuilding instrumental audio track first for {project_dir.name}",
+        )
     try:
         if _build_residual_instrumental(audio_path, vocals_wav, rebuilt):
             rebuilt.replace(minus_track)
@@ -1227,7 +1278,9 @@ def _ensure_residual_instrumental(
         elif rebuilt.exists():
             rebuilt.unlink()
     except Exception as exc:
-        logger.warning("[STEMS] residual upgrade failed for %s: %s", project_dir.name, exc)
+        logger.warning(
+            "[STEMS] residual upgrade failed for %s: %s", project_dir.name, exc
+        )
         if rebuilt.exists():
             try:
                 rebuilt.unlink()
@@ -1317,7 +1370,7 @@ def _run_demucs_with_progress(
                         )
                         _update_job(
                             job_id,
-                            message=f"Separating stems for {project_name} ({pct}%)",
+                            message=f"Separating stems for {audio_path.name} ({pct}%)",
                             progress=progress,
                         )
             returncode = proc.wait()
@@ -1401,6 +1454,7 @@ def _run_syncedlyrics(term: str, out_path: Path, timeout: int | None = None) -> 
 # Purpose: Split audio into stems (vocals/instrumental), transcribe
 #          to lyrics, fetch synced lyrics, and correct word timing
 # ===============================================================
+
 
 def _run_audio_pipeline_job(
     job_id: str,
@@ -1640,7 +1694,12 @@ def _download_with_ytdlp(job_id: str, url: str) -> Path:
 
 
 def _download_with_metube(
-    job_id: str, url: str, *, start_progress: int = 20, end_progress: int = 35
+    job_id: str,
+    url: str,
+    *,
+    start_progress: int = 20,
+    end_progress: int = 35,
+    profile: str = "",
 ) -> tuple[Path, dict]:
     known_files = {path.name for path in OUTPUT_DIR.iterdir() if _is_source_media(path)}
     expected = _probe_url_identity(url)
@@ -1663,7 +1722,9 @@ def _download_with_metube(
         artist=identity["artist"],
         title=identity["title"],
     )
-    downloaded = _move_audio_into_project(downloaded, identity["safe_stem"])
+    downloaded = _move_audio_into_project(
+        downloaded, identity["safe_stem"], profile
+    )
     rel_audio = _relative_to_output(downloaded)
     _update_job(
         job_id,
@@ -1683,12 +1744,13 @@ def _run_url_job(
     whisper_device: str = DEFAULT_WHISPER_DEVICE,
     whisper_model: str = DEFAULT_WHISPER_MODEL,
     transcription_language: str = DEFAULT_TRANSCRIPTION_LANGUAGE,
+    profile: str = "",
 ) -> None:
     engine_norm = (engine or "ytdl").strip().lower()
     logger.info("[URL START] job=%s engine=%s url=%s", job_id, engine_norm, url)
     if engine_norm == "metube":
         downloaded, identity = _download_with_metube(
-            job_id, url, start_progress=20, end_progress=35
+            job_id, url, start_progress=20, end_progress=35, profile=profile
         )
         rel_audio = _relative_to_output(downloaded)
         _run_audio_pipeline_job(
@@ -1716,7 +1778,9 @@ def _run_url_job(
             artist=identity["artist"],
             title=identity["title"],
         )
-        downloaded = _move_audio_into_project(downloaded, identity["safe_stem"])
+        downloaded = _move_audio_into_project(
+            downloaded, identity["safe_stem"], profile
+        )
         rel_audio = _relative_to_output(downloaded)
         _update_job(
             job_id,
@@ -1745,7 +1809,7 @@ def _run_url_job(
             progress=15,
         )
         downloaded, identity = _download_with_metube(
-            job_id, url, start_progress=20, end_progress=35
+            job_id, url, start_progress=20, end_progress=35, profile=profile
         )
         rel_audio = _relative_to_output(downloaded)
 
@@ -1769,6 +1833,7 @@ def _run_url_job(
 # Purpose: Render karaoke video with lyrics, effects, audio,
 #          and support for Final (no vocal), Chorus, and Preview
 # ===============================================================
+
 
 def _run_render_job(
     job_id: str,
@@ -1801,8 +1866,9 @@ def _run_render_job(
     project_name: str = "",
     ball_radius: int = 26,
     arc_height: int = 78,
-    arc_fraction: float = 0.35,
     bounce_per_sec: float = 0.1,
+    ball_icon: str = "",
+    ball_rotation: float = 1.5,
     ball_color: str = "#ffffff",
     ball_outline_color: str = "#000000",
     outline_width: int = -1,
@@ -1876,6 +1942,8 @@ def _run_render_job(
                 ball_radius=ball_radius,
                 arc_height=arc_height,
                 bounce_per_sec=bounce_per_sec,
+                ball_icon=ball_icon,
+                ball_rotation=ball_rotation,
                 ball_color=ball_color,
                 ball_outline_color=ball_outline_color,
                 outline_width=outline_width,
@@ -1920,6 +1988,7 @@ def _run_lyrics_fetch_job(
     provider: str = "syncedlyrics",
     project_name: str = "",
     force: bool = False,
+    suno_url: str = "",
 ) -> None:
     audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
     rel_audio = _relative_to_output(audio_path)
@@ -1941,7 +2010,7 @@ def _run_lyrics_fetch_job(
         return
 
     selected_provider = str(provider or "syncedlyrics").strip().lower()
-    if selected_provider not in {"auto", "syncedlyrics", "lrclib", "genius"}:
+    if selected_provider not in {"auto", "syncedlyrics", "lrclib", "genius", "suno"}:
         selected_provider = "auto"
 
     _update_job(
@@ -1970,6 +2039,20 @@ def _run_lyrics_fetch_job(
         selected_provider = (
             f"auto ({winning_provider}) - {timing_desc} ({timestamp_count} timestamps)"
         )
+    elif selected_provider == "suno":
+        content = _fetch_lyrics_from_suno(suno_url)
+        if not str(content or "").strip():
+            raise RuntimeError(f"Suno returned no lyrics for {project_name}")
+        lrc_file.write_text(content.strip() + "\n", encoding="utf-8")
+        timing_level, timestamp_count = _detect_timing_level(content)
+        timing_names = {
+            3: "syllable-level",
+            2: "word-level",
+            1: "line-level",
+            0: "no-timing",
+        }
+        timing_desc = timing_names.get(timing_level, "unknown")
+        selected_provider = f"suno - {timing_desc} ({timestamp_count} timestamps)"
     elif selected_provider == "syncedlyrics":
         identity = _derive_media_identity(
             path=audio_path, raw_name=display_title or audio_path.stem
@@ -2106,6 +2189,10 @@ def _run_word_timing_correction_job(
 
 
 def _sync_project_jobs() -> None:
+    # Pulling is manual-only: ingest/lyrics jobs are started exclusively from the UI
+    # buttons (Pull / Pull Lyrics / Upload). Never auto-enqueue from the watcher.
+    if not AUTO_PULL_ENABLED:
+        return
     # Don't auto-enqueue ingest/lyrics jobs while the user is actively hand-timing.
     if time.time() < TIMING_MODE_UNTIL:
         return
@@ -2154,7 +2241,7 @@ def _job_worker_loop() -> None:
         job = None
         with JOB_LOCK:
             while JOB_QUEUE:
-                next_job = JOBS.get(JOB_QUEUE.pop(0))
+                next_job = JOBS.get(JOB_QUEUE.popleft())
                 if not next_job:
                     continue
                 if next_job["status"] == "cancelled":
@@ -2227,6 +2314,136 @@ def _relative_to_output(path: Path) -> str:
     return path.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
 
 
+# ===============================================================
+# SECTION: Media Vault Profiles
+# Purpose: Manage per-user profile folders under output/ so each profile
+#          only sees its own projects, and songs can be copied/moved between
+#          profiles. Layout: output/<profile>/<project>/<files>.
+# ===============================================================
+
+
+def _safe_profile_name(name: str) -> str:
+    return _safe_output_name(name, fallback_stem=DEFAULT_PROFILE)
+
+
+def _load_profiles_registry() -> dict:
+    data = {}
+    if PROFILES_FILE.exists():
+        try:
+            data = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    raw_profiles = data.get("profiles")
+    profiles: list[str] = []
+    if isinstance(raw_profiles, list):
+        for entry in raw_profiles:
+            safe = _safe_profile_name(str(entry))
+            if safe and safe not in profiles:
+                profiles.append(safe)
+    if DEFAULT_PROFILE not in profiles:
+        profiles.insert(0, DEFAULT_PROFILE)
+    active = _safe_profile_name(str(data.get("active") or ""))
+    if active not in profiles:
+        active = DEFAULT_PROFILE
+    return {"profiles": profiles, "active": active}
+
+
+def _save_profiles_registry(reg: dict) -> None:
+    try:
+        PROFILES_FILE.write_text(
+            json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        logger.warning("[PROFILES] could not persist registry to %s", PROFILES_FILE)
+
+
+def _list_profiles() -> list[str]:
+    return _load_profiles_registry()["profiles"]
+
+
+def _active_profile() -> str:
+    return _load_profiles_registry()["active"]
+
+
+def _profile_root(profile: str = "") -> Path:
+    safe = _safe_profile_name(profile) if profile else _active_profile()
+    root = OUTPUT_DIR / safe
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _ensure_profile(profile: str) -> str:
+    safe = _safe_profile_name(profile)
+    reg = _load_profiles_registry()
+    if safe not in reg["profiles"]:
+        reg["profiles"].append(safe)
+        _save_profiles_registry(reg)
+    (OUTPUT_DIR / safe).mkdir(parents=True, exist_ok=True)
+    return safe
+
+
+def _set_active_profile(profile: str) -> str:
+    safe = _ensure_profile(profile)
+    reg = _load_profiles_registry()
+    reg["active"] = safe
+    _save_profiles_registry(reg)
+    return safe
+
+
+def _unique_project_dir(profile_root: Path, project_name: str) -> Path:
+    candidate = profile_root / project_name
+    if not candidate.exists():
+        return candidate
+    counter = 2
+    while (profile_root / f"{project_name}_{counter}").exists():
+        counter += 1
+    return profile_root / f"{project_name}_{counter}"
+
+
+def _migrate_legacy_layout() -> None:
+    """Move pre-profile projects/media into the Default profile folder.
+
+    Legacy layout stored projects directly under output/<project>/. The new
+    layout is output/<profile>/<project>/. On startup we relocate any legacy
+    top-level project folders and loose media files into output/Default/ so the
+    whole app sees a consistent structure without losing existing work.
+    """
+    reg = _load_profiles_registry()
+    profiles = set(reg["profiles"])
+    default_root = OUTPUT_DIR / DEFAULT_PROFILE
+    default_root.mkdir(parents=True, exist_ok=True)
+
+    moved_any = False
+    for path in list(OUTPUT_DIR.iterdir()):
+        name = path.name
+        if name.startswith("."):
+            continue
+        if path.is_dir():
+            if name in profiles or name in RESERVED_OUTPUT_NAMES:
+                continue
+            # Legacy top-level project folder -> relocate under Default.
+            dest = _unique_project_dir(default_root, name)
+            try:
+                shutil.move(str(path), str(dest))
+                moved_any = True
+                logger.info("[MIGRATE] project %s -> %s", name, _relative_to_output(dest))
+            except Exception:
+                logger.warning("[MIGRATE] could not move legacy project %s", name)
+        elif _is_source_media(path):
+            # Legacy loose media at output root -> mint a project under Default.
+            try:
+                _ensure_project_layout_for_audio(path, profile=DEFAULT_PROFILE)
+                moved_any = True
+            except Exception:
+                logger.warning("[MIGRATE] could not migrate loose media %s", name)
+
+    _save_profiles_registry(reg)
+    if moved_any:
+        logger.info("[MIGRATE] legacy media relocated into profile '%s'", DEFAULT_PROFILE)
+
+
 def _resolve_output_path(path_like: str, *, require_exists: bool = True) -> Path:
     rel = Path(str(path_like or "").strip().lstrip("/"))
     candidate = (OUTPUT_DIR / rel).resolve()
@@ -2287,7 +2504,10 @@ def _find_project_state(project_dir: Path) -> Path | None:
     )
     if project_files:
         return project_files[0]
-    return _find_project_asset(project_dir, ".json")
+    # Only a *.proj.json file counts as saved project state. Never fall back to an
+    # arbitrary *.json (e.g. vocals.json / transcript output) or an unsaved project
+    # gets treated as saved and save/load/rename can clobber the transcript JSON.
+    return None
 
 
 def _find_project_stems(project_dir: Path, audio_stem: str = "") -> Path | None:
@@ -2334,12 +2554,16 @@ def _rename_project_assets(project_dir: Path, project_name: str) -> None:
         path.rename(target)
 
 
-def _project_has_active_jobs(project_name: str) -> bool:
+def _project_has_active_jobs(project_ref: str) -> bool:
+    # project_ref may be a bare project name or a profile-qualified path
+    # ("profile/project"). Match jobs by audio path prefix or bare project name.
+    rel = str(project_ref or "").strip("/")
+    bare = Path(rel).name
     return any(
         job.get("status") in {"queued", "running"}
         and (
-            job.get("project_name") == project_name
-            or str(job.get("audio_filename") or "").startswith(f"{project_name}/")
+            job.get("project_name") == bare
+            or str(job.get("audio_filename") or "").startswith(f"{rel}/")
         )
         for job in JOBS.values()
     )
@@ -2435,7 +2659,10 @@ def _finalize_pending_project_renames() -> list[dict]:
                     )
 
             _rewrite_project_references(
-                old_name, target_project.name, old_rel_audio, new_rel_audio
+                Path(old_name).name,
+                target_project.name,
+                old_rel_audio,
+                new_rel_audio,
             )
             PENDING_PROJECT_RENAMES.pop(old_name, None)
             completed.append(
@@ -2451,18 +2678,30 @@ def _finalize_pending_project_renames() -> list[dict]:
     return completed
 
 
-def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
-    if audio_path.parent != OUTPUT_DIR:
+def _ensure_project_layout_for_audio(audio_path: Path, profile: str = "") -> Path:
+    parent = audio_path.parent
+    output_root = OUTPUT_DIR.resolve()
+    parent_res = parent.resolve()
+    profiles = set(_list_profiles())
+
+    if parent_res == output_root:
+        # Loose media sitting at the output root -> place under a profile.
+        container = _profile_root(profile)
+    elif parent.name in profiles and parent.parent.resolve() == output_root:
+        # Loose media sitting directly inside a profile folder -> mint a project.
+        container = parent
+    else:
+        # Already nested inside output/<profile>/<project>/ (or a project dir).
         return audio_path
 
     base_project = _safe_project_name(audio_path.stem, fallback="project")
-    project_dir = OUTPUT_DIR / base_project
+    project_dir = container / base_project
     if project_dir.exists() and project_dir.is_dir():
         if not (project_dir / audio_path.name).exists():
             counter = 2
-            while (OUTPUT_DIR / f"{base_project}_{counter}").exists():
+            while (container / f"{base_project}_{counter}").exists():
                 counter += 1
-            project_dir = OUTPUT_DIR / f"{base_project}_{counter}"
+            project_dir = container / f"{base_project}_{counter}"
     project_dir.mkdir(parents=True, exist_ok=True)
 
     target_audio = project_dir / audio_path.name
@@ -2478,11 +2717,11 @@ def _ensure_project_layout_for_audio(audio_path: Path) -> Path:
     if target_audio != audio_path:
         audio_path.rename(target_audio)
     old_stem = audio_path.stem
-    for candidate in _project_sidecar_paths(OUTPUT_DIR, old_stem):
+    for candidate in _project_sidecar_paths(container, old_stem):
         if candidate.exists() and candidate.is_file():
             candidate.rename(project_dir / candidate.name)
 
-    old_stems = OUTPUT_DIR / "stems" / "htdemucs" / old_stem
+    old_stems = container / "stems" / "htdemucs" / old_stem
     if old_stems.exists() and not (project_dir / "stems").exists():
         (project_dir / "stems").parent.mkdir(parents=True, exist_ok=True)
         old_stems.parent.parent.rename(project_dir / "stems")
@@ -2529,6 +2768,7 @@ def _project_manifest(project_dir: Path) -> dict | None:
     return {
         "name": project_dir.name,
         "project_name": project_dir.name,
+        "profile": project_dir.parent.name,
         "audio_filename": rel_audio,
         "size": f"{audio_path.stat().st_size / (1024*1024):.2f} MB",
         "url": f"/files/{quote(rel_audio, safe='/')}",
@@ -2550,21 +2790,23 @@ def _project_manifest(project_dir: Path) -> dict | None:
     }
 
 
-def _list_project_manifests() -> list[dict]:
+def _list_project_manifests(profile: str = "") -> list[dict]:
+    root = _profile_root(profile)
     manifests = []
-    for path in OUTPUT_DIR.iterdir():
+    for path in root.iterdir():
         if path.is_dir() and path.name != "stems":
             manifest = _project_manifest(path)
             if manifest:
                 manifests.append(manifest)
 
-    # Compatibility migration path: convert loose top-level media files into project folders.
+    # Compatibility migration path: convert loose media directly inside this
+    # profile folder into project subfolders.
     for path in sorted(
-        OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+        root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
     ):
         if not _is_source_media(path):
             continue
-        moved = _ensure_project_layout_for_audio(path)
+        moved = _ensure_project_layout_for_audio(path, profile=root.name)
         manifest = _project_manifest(moved.parent)
         if manifest:
             manifests.append(manifest)
@@ -2636,6 +2878,7 @@ def _resolve_output_file(filename: str) -> Path:
 # Purpose: Fetch lyrics from LRCLib, Genius, SyncedLyrics APIs
 #          with ranking, normalization, and LRC format conversion
 # ===============================================================
+
 
 def _fetch_lyrics_for_media(audio_path: Path) -> str:
     audio_path = _ensure_project_layout_for_audio(audio_path)
@@ -2833,7 +3076,159 @@ def _fetch_lyrics_from_syncedlyrics(identity: dict) -> str:
         output_path.unlink(missing_ok=True)
 
 
+# Suno structural markers such as [Verse], [Chorus], [Intro], [Bridge] are not
+# sung words, so they are dropped before the lyrics become karaoke lines.
+_SUNO_SECTION_RE = re.compile(r"^\s*\[[^\]]+\]\s*$")
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _extract_suno_song_id(raw: str) -> str:
+    """Pull a Suno clip UUID out of a full URL, share link, or bare id."""
+    match = _UUID_RE.search(str(raw or ""))
+    return match.group(0) if match else ""
+
+
+def _clean_suno_lyrics(text: str) -> str:
+    """Strip Suno section tags while keeping stanza breaks and sung lines."""
+    out: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            out.append("")
+            continue
+        if _SUNO_SECTION_RE.match(line):
+            continue
+        out.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    return cleaned
+
+
+def _decode_json_string_body(body: str) -> str:
+    """Decode a JSON-escaped string body captured from embedded page JSON."""
+    try:
+        return json.loads('"' + body + '"')
+    except Exception:
+        return (
+            body.replace("\\r", "")
+            .replace("\\n", "\n")
+            .replace('\\"', '"')
+            .replace("\\/", "/")
+            .replace("\\\\", "\\")
+        )
+
+
+def _fetch_lyrics_from_suno(url_or_id: str) -> str:
+    """
+    Pull the exact lyrics a Suno song was generated from.
+
+    Accepts a full song URL (https://suno.com/song/<id>), a share link
+    (https://suno.com/s/<code>), or a bare clip id. Suno lyrics are unsynced,
+    so they are returned as line-level LRC (placeholder timing) that the user
+    can refine with AI word-timing correction.
+    """
+    raw = str(url_or_id or "").strip()
+    if not raw:
+        raise RuntimeError("Provide a Suno song link or ID to pull lyrics from Suno.")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OnePageKaraoke/1.0"
+        ),
+        "Accept": "application/json, text/html;q=0.9,*/*;q=0.8",
+    }
+
+    song_id = _extract_suno_song_id(raw)
+    page_html = ""
+
+    # Share links (/s/<code>) redirect to the canonical /song/<uuid> page.
+    if not song_id and raw.lower().startswith("http"):
+        try:
+            resolved = requests.get(
+                raw, headers=headers, timeout=15, allow_redirects=True
+            )
+            song_id = _extract_suno_song_id(resolved.url)
+            page_html = resolved.text or ""
+        except Exception as exc:
+            logger.warning("[SUNO] link resolve failed: %s", exc)
+
+    lyrics = ""
+
+    # Strategy 1: public clip/feed API endpoints return metadata.prompt (lyrics).
+    if song_id:
+        api_urls = [
+            f"https://studio-api.prod.suno.com/api/clip/{song_id}",
+            f"https://studio-api.suno.ai/api/clip/{song_id}",
+            f"https://studio-api.prod.suno.com/api/feed/v2?ids={song_id}",
+            f"https://studio-api.suno.ai/api/external/clips/?ids={song_id}",
+        ]
+        for api_url in api_urls:
+            try:
+                res = requests.get(api_url, headers=headers, timeout=15)
+                if res.status_code >= 400:
+                    continue
+                data = res.json()
+                clip = data
+                if isinstance(data, dict) and isinstance(data.get("clips"), list):
+                    clip = data["clips"][0] if data["clips"] else {}
+                elif isinstance(data, list):
+                    clip = data[0] if data else {}
+                if isinstance(clip, dict):
+                    meta = clip.get("metadata")
+                    meta = meta if isinstance(meta, dict) else {}
+                    lyrics = str(
+                        meta.get("prompt")
+                        or clip.get("prompt")
+                        or meta.get("lyrics")
+                        or clip.get("lyrics")
+                        or ""
+                    ).strip()
+                if lyrics:
+                    break
+            except Exception as exc:
+                logger.warning("[SUNO] api %s failed: %s", api_url, exc)
+                continue
+
+    # Strategy 2: scrape the public song page for the embedded lyrics JSON.
+    if not lyrics:
+        if not page_html and song_id:
+            try:
+                page_res = requests.get(
+                    f"https://suno.com/song/{song_id}", headers=headers, timeout=15
+                )
+                page_html = page_res.text or ""
+            except Exception as exc:
+                logger.warning("[SUNO] page fetch failed: %s", exc)
+        if page_html:
+            for pattern in (
+                r'\\"prompt\\":\\"(.*?)\\"',
+                r'"prompt":"(.*?)"',
+                r'\\"lyrics\\":\\"(.*?)\\"',
+                r'"lyrics":"(.*?)"',
+            ):
+                match = re.search(pattern, page_html, flags=re.DOTALL)
+                if not match:
+                    continue
+                candidate = _decode_json_string_body(match.group(1))
+                # Double-escaped payloads (Next.js stream) need a second pass.
+                if "\\n" in candidate or '\\"' in candidate:
+                    candidate = _decode_json_string_body(candidate)
+                if candidate.strip():
+                    lyrics = candidate.strip()
+                    break
+
+    cleaned = _clean_suno_lyrics(lyrics)
+    if not cleaned:
+        raise RuntimeError(
+            "Could not read lyrics from that Suno link. Make sure the song is "
+            "public/shared and the link or ID is correct."
+        )
+    return _plain_text_to_lrc(cleaned)
+
+
 def _detect_timing_level(content: str) -> tuple[int, int]:
+
     """
     Detect the timing level granularity of lyrics.
     Returns: (timing_level, timestamp_count)
@@ -3203,6 +3598,12 @@ def _build_chorus_aware_track(
     User-marked words (see _parse_manual_chorus_ranges) take priority; when the
     user hasn't marked anything we fall back to repeated-block auto-detection.
     """
+    if job_id:
+        _update_job(
+            job_id,
+            stage="audio prep",
+            message=f"Rendering chorus audio track first for {audio_path.parent.name}",
+        )
     chorus_ranges = _parse_manual_chorus_ranges(lrc_path)
     if chorus_ranges:
         logger.info(
@@ -3445,53 +3846,57 @@ def _build_audio_filter(volume: float = 1.0, pitch: float = 1.0) -> str:
     return ",".join(filters)
 
 
+_ENCODER_ARGS_CACHE: dict[str, list[str]] = {}
+
+
 def _render_video_encoder_args(render_device: str) -> list[str]:
+    # ffmpeg's encoder list and NVENC capability don't change during a process run,
+    # so probe once per device and reuse the result instead of re-running two
+    # subprocesses on every render.
     normalized = _normalize_device(render_device, DEFAULT_RENDER_DEVICE)
+    cached = _ENCODER_ARGS_CACHE.get(normalized)
+    if cached is not None:
+        return list(cached)
+    result = _probe_video_encoder_args(normalized)
+    _ENCODER_ARGS_CACHE[normalized] = list(result)
+    return list(result)
+
+
+def _probe_video_encoder_args(normalized: str) -> list[str]:
     probe = subprocess.run(
-        [FFMPEG_BIN, "-hide_banner", "-encoders"],
-        capture_output=True,
-        text=True,
+        [FFMPEG_BIN, "-hide_banner", "-encoders"], capture_output=True, text=True,
     )
     encoders = f"{probe.stdout or ''}\n{probe.stderr or ''}"
+
     if normalized != "cpu":
         if "h264_nvenc" in encoders:
             runtime_probe = subprocess.run(
                 [
-                    FFMPEG_BIN,
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "color=c=black:s=64x64:r=1",
-                    "-frames:v",
-                    "1",
-                    "-c:v",
-                    "h264_nvenc",
-                    "-f",
-                    "null",
-                    "-",
+                    FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "color=c=black:s=64x64:r=1", "-frames:v", "1",
+                    "-c:v", "h264_nvenc", "-f", "null", "-",
                 ],
-                capture_output=True,
-                text=True,
+                capture_output=True, text=True,
             )
             if runtime_probe.returncode == 0:
                 logger.info("[GPU CHECK] FFmpeg NVENC initialization succeeded")
-                return ["-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "5M"]
+                # FIXED: Increased bitrate from 5M to 15M and preset to p6 for high quality
+                return ["-c:v", "h264_nvenc", "-preset", "p6", "-b:v", "15M"]
+
             logger.warning(
                 "[GPU CHECK] NVENC initialization failed; using CPU encoder: %s",
                 (runtime_probe.stderr or "unknown error").strip()[-500:],
             )
         else:
-            logger.warning(
-                "[GPU CHECK] FFmpeg does not expose h264_nvenc; using CPU encoder"
-            )
+            logger.warning("[GPU CHECK] FFmpeg does not expose h264_nvenc; using CPU encoder")
+
     if "libx264" in encoders:
-        return ["-c:v", "libx264", "-crf", "26"]
+        # FIXED: Lowered CRF from 26 to 18 (visually lossless)
+        return ["-c:v", "libx264", "-crf", "18"]
     if "libopenh264" in encoders:
-        return ["-c:v", "libopenh264", "-b:v", "3M"]
-    return ["-c:v", "mpeg4", "-q:v", "5"]
+        # FIXED: Increased bitrate from 3M to 10M
+        return ["-c:v", "libopenh264", "-b:v", "10M"]
+    return ["-c:v", "mpeg4", "-q:v", "2"] # Lower q:v is better for mpeg4
 
 
 def _render_static_background(
@@ -3569,7 +3974,9 @@ def _render_static_background(
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(cache_path)
-    logger.info("[BACKGROUND] Rasterized static %s background -> %s", kind, cache_path.name)
+    logger.info(
+        "[BACKGROUND] Rasterized static %s background -> %s", kind, cache_path.name
+    )
     return cache_path
 
 
@@ -3594,7 +4001,7 @@ def directory_watcher_loop() -> None:
         try:
             _sync_project_jobs()
         except Exception:
-            pass
+            logger.exception("[WATCHER] _sync_project_jobs failed")
         time.sleep(5)
 
 
@@ -3609,6 +4016,7 @@ async def upload_file(
     whisper_device: str = Form(DEFAULT_WHISPER_DEVICE),
     whisper_model: str = Form(DEFAULT_WHISPER_MODEL),
     transcription_language: str = Form(DEFAULT_TRANSCRIPTION_LANGUAGE),
+    profile: str = Form(""),
 ):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix and suffix not in SUPPORTED_AUDIO_EXTS:
@@ -3627,7 +4035,7 @@ async def upload_file(
     target, identity = _apply_canonical_media_name(
         target, raw_name=file.filename or "upload"
     )
-    target = _move_audio_into_project(target, identity["safe_stem"])
+    target = _move_audio_into_project(target, identity["safe_stem"], profile)
 
     job = _start_pipeline_if_idle(
         target,
@@ -3659,6 +4067,7 @@ def process_url(
     whisper_device: str = Form(DEFAULT_WHISPER_DEVICE),
     whisper_model: str = Form(DEFAULT_WHISPER_MODEL),
     transcription_language: str = Form(DEFAULT_TRANSCRIPTION_LANGUAGE),
+    profile: str = Form(""),
 ):
     url = (url or "").strip()
     if not url:
@@ -3687,6 +4096,7 @@ def process_url(
         whisper_device=whisper_device,
         whisper_model=whisper_model,
         transcription_language=_normalize_language(transcription_language),
+        profile=_safe_profile_name(profile) if profile else _active_profile(),
         section="ingest",
         stage="download",
         details=f"Stem device: {stem_device}; Whisper device: {whisper_device}; Model: {whisper_model}; Language: {transcription_language}",
@@ -3705,10 +4115,182 @@ def process_url(
 
 
 # ===============================================================
+# SECTION: API Endpoints - Media Vault Profiles
+# Purpose: Create/list/select profiles and copy or move projects
+#          between profiles. Projects live under output/<profile>/.
+# ===============================================================
+
+
+@app.get("/api/profiles")
+def get_profiles():
+    reg = _load_profiles_registry()
+    return {"profiles": reg["profiles"], "active": reg["active"]}
+
+
+@app.post("/api/profiles")
+def create_profile(name: str = Form(...)):
+    safe = _safe_profile_name(name)
+    if not safe:
+        return JSONResponse(
+            status_code=400, content={"message": "Invalid profile name."}
+        )
+    if safe in RESERVED_OUTPUT_NAMES:
+        return JSONResponse(
+            status_code=400,
+            content={"message": f"'{safe}' is a reserved name."},
+        )
+    _ensure_profile(safe)
+    reg = _load_profiles_registry()
+    return {
+        "status": "success",
+        "message": f"Profile '{safe}' ready.",
+        "created": safe,
+        "profiles": reg["profiles"],
+        "active": reg["active"],
+    }
+
+
+@app.post("/api/profiles/active")
+def set_active_profile_endpoint(name: str = Form(...)):
+    safe = _safe_profile_name(name)
+    if not safe:
+        return JSONResponse(
+            status_code=400, content={"message": "Invalid profile name."}
+        )
+    active = _set_active_profile(safe)
+    reg = _load_profiles_registry()
+    return {"status": "success", "active": active, "profiles": reg["profiles"]}
+
+
+@app.post("/api/profiles/delete")
+def delete_profile(name: str = Form(...)):
+    safe = _safe_profile_name(name)
+    if safe == DEFAULT_PROFILE:
+        return JSONResponse(
+            status_code=400,
+            content={"message": "The Default profile cannot be deleted."},
+        )
+    reg = _load_profiles_registry()
+    if safe not in reg["profiles"]:
+        return JSONResponse(
+            status_code=404, content={"message": f"Unknown profile: {safe}"}
+        )
+
+    # Relocate any projects into Default rather than destroying them.
+    source_root = OUTPUT_DIR / safe
+    default_root = OUTPUT_DIR / DEFAULT_PROFILE
+    default_root.mkdir(parents=True, exist_ok=True)
+    moved = []
+    if source_root.exists():
+        for path in list(source_root.iterdir()):
+            if path.is_dir() and path.name != "stems":
+                dest = _unique_project_dir(default_root, path.name)
+                try:
+                    shutil.move(str(path), str(dest))
+                    moved.append(dest.name)
+                except Exception:
+                    logger.warning(
+                        "[PROFILES] could not relocate %s during delete", path.name
+                    )
+        try:
+            shutil.rmtree(source_root, ignore_errors=True)
+        except Exception:
+            pass
+
+    reg["profiles"] = [p for p in reg["profiles"] if p != safe]
+    if reg["active"] == safe:
+        reg["active"] = DEFAULT_PROFILE
+    _save_profiles_registry(reg)
+    return {
+        "status": "success",
+        "message": (
+            f"Deleted profile '{safe}'."
+            + (f" Moved {len(moved)} project(s) to Default." if moved else "")
+        ),
+        "profiles": reg["profiles"],
+        "active": reg["active"],
+        "relocated": moved,
+    }
+
+
+@app.post("/api/transfer-project")
+def transfer_project(
+    audio_filename: str = Form(...),
+    target_profile: str = Form(...),
+    mode: str = Form("copy"),
+):
+    mode_norm = (mode or "copy").strip().lower()
+    if mode_norm not in {"copy", "move"}:
+        return JSONResponse(
+            status_code=400, content={"message": f"Unsupported mode: {mode}"}
+        )
+    try:
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"message": str(exc)})
+
+    project_dir = audio_path.parent
+    source_profile = project_dir.parent.name
+    dest_profile = _ensure_profile(target_profile)
+    if dest_profile == source_profile:
+        return JSONResponse(
+            status_code=400,
+            content={"message": "Source and destination profiles are the same."},
+        )
+
+    dest_root = OUTPUT_DIR / dest_profile
+    old_rel_project = _relative_to_output(project_dir)
+
+    if mode_norm == "move" and _project_has_active_jobs(old_rel_project):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "message": "Project is busy with an active job. Try again once it finishes."
+            },
+        )
+
+    dest_dir = _unique_project_dir(dest_root, project_dir.name)
+    try:
+        if mode_norm == "move":
+            shutil.move(str(project_dir), str(dest_dir))
+        else:
+            shutil.copytree(str(project_dir), str(dest_dir))
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"message": f"Transfer failed: {exc}"},
+        )
+
+    new_audio = next(
+        (p for p in dest_dir.iterdir() if _is_source_media(p)), None
+    )
+    new_rel_audio = _relative_to_output(new_audio) if new_audio else ""
+
+    if mode_norm == "move" and new_rel_audio:
+        # Keep in-flight/known job references pointing at the new location.
+        _rewrite_project_references(
+            project_dir.name, dest_dir.name, _relative_to_output(audio_path), new_rel_audio
+        )
+
+    verb = "Moved" if mode_norm == "move" else "Copied"
+    return {
+        "status": "success",
+        "message": f"{verb} '{project_dir.name}' to profile '{dest_profile}'.",
+        "mode": mode_norm,
+        "target_profile": dest_profile,
+        "project_name": dest_dir.name,
+        "audio_filename": new_rel_audio,
+    }
+
+
+# ===============================================================
 # SECTION: API Endpoints - Lyrics & Audio Processing
 # Purpose: POST endpoints for fetching, transcribing, and timing
 #          lyrics automatically using various AI services
 # ===============================================================
+
 
 @app.post("/api/timing-mode")
 def set_timing_mode(active: str = Form("0")):
@@ -3720,15 +4302,26 @@ def set_timing_mode(active: str = Form("0")):
 
 
 @app.post("/api/auto-grab-lyrics")
-def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrclib")):
+def auto_grab_lyrics(
+    audio_filename: str = Form(...),
+    provider: str = Form("lrclib"),
+    suno_url: str = Form(""),
+):
     try:
         audio_path = _ensure_project_layout_for_audio(
             _resolve_output_file(audio_filename)
         )
         rel_audio = _relative_to_output(audio_path)
+        project_name = audio_path.parent.name
         provider_norm = str(provider or "lrclib").strip().lower()
-        if provider_norm not in {"auto", "lrclib", "genius", "syncedlyrics"}:
+        if provider_norm not in {"auto", "lrclib", "genius", "syncedlyrics", "suno"}:
             provider_norm = "auto"
+
+        if provider_norm == "suno" and not str(suno_url or "").strip():
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Paste a Suno song link or ID to pull from Suno."},
+            )
 
         job = _enqueue_job(
             "lyrics",
@@ -3742,6 +4335,7 @@ def auto_grab_lyrics(audio_filename: str = Form(...), provider: str = Form("lrcl
             lyrics_query=audio_path.stem,
             display_title=audio_path.stem,
             provider=provider_norm,
+            suno_url=str(suno_url or "").strip(),
             force=True,
             details=f"Provider: {provider_norm}",
         )
@@ -3784,11 +4378,11 @@ def auto_transcribe(
     if not job:
         return {
             "status": "busy",
-            "message": f"{project_name} is already queued or being processed.",
+            "message": f"{audio_path.stem} is already queued or being processed.",
         }
     return {
         "status": "queued",
-        "message": f"Queued auto-transcribe/sync for {project_name}.",
+        "message": f"Queued auto-transcribe/sync for {audio_path.stem}.",
         "job": job,
     }
 
@@ -3809,6 +4403,8 @@ def auto_correct_word_timing(
         return JSONResponse(status_code=404, content={"message": str(exc)})
 
     rel_audio = _relative_to_output(audio_path)
+    project_name=audio_path.parent.name
+
     selected_mode = str(timing_mode or "major").strip().lower()
     if selected_mode not in {"minor", "major", "safe-word", "custom"}:
         selected_mode = "safe-word"
@@ -3831,7 +4427,7 @@ def auto_correct_word_timing(
         job_kwargs["max_offset_seconds"] = clamped_offset
     job = _enqueue_job(
         "word_timing",
-        f"{mode_label} AI timing for {project_name}",
+        f"{mode_label} AI timing for {audio_filename}",
         "word_timing",
         section="editor",
         stage="ai word align",
@@ -3892,7 +4488,7 @@ def delete_media(audio_filename: str = Form(...)):
             deleted.append(candidate.name)
     return {
         "status": "success",
-        "message": f"Deleted {project_name} and related assets.",
+        "message": f"Deleted {stem} and related assets.",
         "deleted": deleted,
     }
 
@@ -3906,6 +4502,8 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
 
     audio_path = _ensure_project_layout_for_audio(audio_path)
     old_project = audio_path.parent
+    profile_dir = old_project.parent
+    old_rel_project = _relative_to_output(old_project)
     old_rel_audio = _relative_to_output(audio_path)
 
     proposed_project = _safe_project_name(new_name, fallback=old_project.name)
@@ -3914,12 +4512,13 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
             status_code=400, content={"message": "Invalid project name."}
         )
 
-    target_project = OUTPUT_DIR / proposed_project
+    target_rel_project = f"{_relative_to_output(profile_dir)}/{proposed_project}"
+    target_project = OUTPUT_DIR / target_rel_project
     with RENAME_LOCK:
         reserved_names = set(PENDING_PROJECT_RENAMES.values()) - {
-            PENDING_PROJECT_RENAMES.get(old_project.name)
+            PENDING_PROJECT_RENAMES.get(old_rel_project)
         }
-        if proposed_project in reserved_names or (
+        if target_rel_project in reserved_names or (
             target_project.exists()
             and target_project.resolve() != old_project.resolve()
         ):
@@ -3929,11 +4528,11 @@ def rename_media(audio_filename: str = Form(...), new_name: str = Form(...)):
                     "message": f"Project already exists or is being renamed to: {proposed_project}"
                 },
             )
-        PENDING_PROJECT_RENAMES[old_project.name] = proposed_project
+        PENDING_PROJECT_RENAMES[old_rel_project] = target_rel_project
         completed = _finalize_pending_project_renames()
 
     finalized = next(
-        (item for item in completed if item["old_project"] == old_project.name), None
+        (item for item in completed if item["old_project"] == old_rel_project), None
     )
     if finalized:
         target_audio = _resolve_output_file(finalized["audio_filename"])
@@ -3986,17 +4585,6 @@ def _estimate_word_centers(
         centers.append(cursor + (width / 2.0))
         cursor += width + space_w
     return centers
-
-
-def _ass_circle_drawing(radius: float) -> str:
-    k = radius * 0.5523
-    return (
-        f"m 0 {-radius:.1f} "
-        f"b {k:.1f} {-radius:.1f} {radius:.1f} {-k:.1f} {radius:.1f} 0 "
-        f"b {radius:.1f} {k:.1f} {k:.1f} {radius:.1f} 0 {radius:.1f} "
-        f"b {-k:.1f} {radius:.1f} {-radius:.1f} {k:.1f} {-radius:.1f} 0 "
-        f"b {-radius:.1f} {-k:.1f} {-k:.1f} {-radius:.1f} 0 {-radius:.1f}"
-    )
 
 
 def _word_transform_ass(style: str, offset_ms: int, speed_ms: int) -> str:
@@ -4080,17 +4668,31 @@ def _build_bouncing_ball_events(
     layout_scale: float = 1.0,
     text_width=None,
     word_padding: float = 0.0,
-) -> list[str]:
-    """One ball follows the same word start/end timings used by karaoke color fills."""
+    ball_emoji: str = "none",
+    ball_icon: str = "",
+    ball_rotation: float = 1.5,
+    icon_overlay: bool = False,
+) -> tuple[list[str], list[tuple]]:
+    """One ball follows the same word start/end timings used by karaoke color fills.
+
+    Returns ``(events, segments)``:
+      * ``events``  - ASS Dialogue lines that draw the vector/emoji ball.
+      * ``segments`` - motion path as ``(t0, t1, x0, y0, x1, y1)`` tuples giving the
+        ball CENTER position over time.
+
+    When ``icon_overlay`` is True the ASS ball is NOT drawn (``events`` is empty) and
+    only ``segments`` is populated, so an FFmpeg PNG overlay can move the user's icon
+    along the exact same path in the burned video.
+    """
     if not word_timings:
-        return []
+        return [], []
+
     words = [word for word, _, _ in word_timings]
     centers = _estimate_word_centers(
         words, font_size, text_width=text_width, word_padding=word_padding
     )
     ball_y = line_y - round(font_size * 0.85)
-    # Honor the user's Arc Height / Ball Size from the FX panel, scaled to the
-    # render resolution; fall back to font-derived defaults when unset.
+
     scale = layout_scale if layout_scale > 0 else 1.0
     bounce_h = (
         max(4, round(arc_height * scale))
@@ -4102,122 +4704,235 @@ def _build_bouncing_ball_events(
         if ball_radius and ball_radius > 0
         else max(5, round(font_size * 0.12))
     )
-    drawing = _ass_circle_drawing(radius)
-    # The ball is a \p1 vector shape drawn with the Default style, so it would
-    # otherwise inherit that style's thick text outline AND drop shadow -- the
-    # shadow renders as a second offset ball. Force shadow off and only draw a
-    # border when the user actually picked an outline color.
-    if outline_hex:
-        edge_tag = rf"\3c{_ass_override_color(outline_hex)}\bord{max(1, round(radius * 0.18))}"
-    else:
-        edge_tag = r"\bord0"
-    ball_style = (
-        rf"{{\p1\an5\1c{_ass_override_color(color_hex)}{edge_tag}\shad0}}"
-        rf"{drawing}{{\p0}}"
-    )
-    # Bounce Freq is expressed in bounces per second; convert to a cycle length.
+
+    segments: list[tuple] = []
+    ball_style = ""
+
+    if not icon_overlay:
+        # 1. TEXTURE UPGRADE: Image/Emoji/Vector Support
+        if ball_icon and ball_icon.strip():
+            # An icon was requested but the burned video can't use the raster PNG
+            # through this ASS path (that happens via the FFmpeg overlay when the
+            # file resolves). Draw the vector ball rather than literal text here.
+            drawing = (
+                f"m 0 {-radius} b {radius} {-radius} {radius} {radius} 0 {radius} "
+                f"b {-radius} {radius} {-radius} {-radius} 0 {-radius} "
+                f"m {-radius} 0 l {radius} 0 m 0 {-radius} l 0 {radius}"
+            )
+            if outline_hex:
+                edge_tag = rf"\3c{_ass_override_color(outline_hex)}\bord{max(1, round(radius * 0.18))}"
+            else:
+                edge_tag = r"\bord0"
+            ball_style = (
+                rf"{{\p1\an5\1c{_ass_override_color(color_hex)}{edge_tag}\shad0}}"
+                rf"{drawing}{{\p0}}"
+            )
+        elif ball_emoji and ball_emoji.strip() and ball_emoji.strip() != "none":
+            # Text mode (\p0) for the emoji, scaled dynamically based on ball_radius
+            emoji_size = max(10, round(radius * 2.5))
+            ball_style = rf"{{\p0\an5\fs{emoji_size}\1c&HFFFFFF&\3c&H000000&\bord1\shad0}}{ball_emoji.strip()}"
+        else:
+            # Fallback to the standard spinning vector crosshair
+            drawing = (
+                f"m 0 {-radius} b {radius} {-radius} {radius} {radius} 0 {radius} "
+                f"b {-radius} {radius} {-radius} {-radius} 0 {-radius} "
+                f"m {-radius} 0 l {radius} 0 m 0 {-radius} l 0 {radius}"
+            )
+
+            if outline_hex:
+                edge_tag = rf"\3c{_ass_override_color(outline_hex)}\bord{max(1, round(radius * 0.18))}"
+            else:
+                edge_tag = r"\bord0"
+
+            ball_style = (
+                rf"{{\p1\an5\1c{_ass_override_color(color_hex)}{edge_tag}\shad0}}"
+                rf"{drawing}{{\p0}}"
+            )
+
     try:
         bps = float(bounce_per_sec or 0.0)
     except (TypeError, ValueError):
         bps = 0.0
+
     cycle_len = min(2.0, max(0.08, 1.0 / bps)) if bps > 0 else 0.35
     events: list[str] = []
-    # Cap the hop so the ball doesn't drift far ahead of the lyric during long
-    # instrumental gaps; it waits on the current word and jumps just in time.
     max_hop = 0.55
-    # Duration of the word-to-word flight. Mirrors the 0.32s used by the canvas
-    # preview so the rendered video matches what the user previewed.
     flight_dur = 0.32
 
-    def _arc_steps(x0, x1, t0, t1, height, steps=None):
-        """Approximate a smooth sinusoidal arc with short linear \\move segments.
-
-        ASS \\move interpolates linearly, so a single up/down pair renders as a
-        sharp triangular tent rather than an arc. Subdividing the flight and
-        sampling y = -sin(p*pi)*height reproduces the same curve the canvas
-        preview draws (see the bouncing-ball block in index.html).
-        """
+    # 2. SMOOTHNESS & SPIN ENGINE
+    def _arc_steps(x0, x1, t0, t1, height, steps=None, spin_rotations=ball_rotation):
+        """Approximate a smooth sinusoidal arc, now with higher FPS and Z-axis rotation."""
         out = []
         dur = t1 - t0
         if dur <= 0:
             return out
-        # Sample densely enough that each segment is at most ~1 video frame, so
-        # libass's linear interpolation is indistinguishable from a true curve.
+
         if steps is None:
-            steps = max(6, min(40, int(dur * 30) + 1))
+            steps = max(15, min(60, int(dur * 60) + 1))
+
         prev_t = t0
         prev_px = x0
         prev_py = ball_y
+        prev_angle = 0
+
         for i in range(1, steps + 1):
             p = i / steps
             cur_t = t0 + dur * p
             cur_px = x0 + (x1 - x0) * p
             cur_py = ball_y - math.sin(p * math.pi) * height
-            out.append(
-                f"Dialogue: 2,{fmt_time(prev_t)},{fmt_time(cur_t)},Default,,0,0,0,,"
-                f"{{\\move({prev_px:.0f},{prev_py:.0f},{cur_px:.0f},{cur_py:.0f},0,"
-                f"{max(1, int((cur_t - prev_t) * 1000))})}}{ball_style}"
-            )
+
+            # Record the exact centre keyframe so the PNG overlay can follow it.
+            segments.append((prev_t, cur_t, prev_px, prev_py, cur_px, cur_py))
+
+            if not icon_overlay:
+                # Calculate total degrees to rotate during this hop using custom multiplier
+                cur_angle = p * (360 * spin_rotations)
+
+                segment_dur_ms = max(1, int((cur_t - prev_t) * 1000))
+
+                rot_tag = f"\\frz{prev_angle:.1f}\\t(0,{segment_dur_ms},\\frz{cur_angle:.1f})"
+
+                out.append(
+                    f"Dialogue: 2,{fmt_time(prev_t)},{fmt_time(cur_t)},Default,,0,0,0,,"
+                    f"{{\\move({prev_px:.0f},{prev_py:.0f},{cur_px:.0f},{cur_py:.0f},0,{segment_dur_ms}){rot_tag}}}"
+                    f"{ball_style}"
+                )
+                prev_angle = cur_angle
             prev_t, prev_px, prev_py = cur_t, cur_px, cur_py
         return out
+
+    def _hold(x, t0, t1):
+        """Ball parked at a fixed x (recorded for the overlay, drawn for the vector ball)."""
+        if t1 - t0 <= 0:
+            return
+        segments.append((t0, t1, x, ball_y, x, ball_y))
+        if not icon_overlay:
+            events.append(
+                f"Dialogue: 2,{fmt_time(t0)},{fmt_time(t1)},Default,,0,0,0,,"
+                f"{{\\pos({x:.0f},{ball_y})\\frz0}}{ball_style}"
+            )
 
     for idx, (_, word_start, word_end) in enumerate(word_timings):
         word_end = max(word_start + 0.02, word_end)
         target_x = center_x + centers[idx]
         if idx == 0:
-            # First word of the line: the ball simply appears on it. Never park
-            # it off to the side beforehand.
             prev_x = target_x
             idle_start = word_start
         else:
             prev_x = center_x + centers[idx - 1]
             prev_end = max(word_timings[idx - 1][1] + 0.02, word_timings[idx - 1][2])
-            # Match the canvas preview: the ball flies across during the START of
-            # the new word rather than requiring a gap beforehand. Lyrics are
-            # usually back-to-back, so a gap-only hop left no room to travel and
-            # the ball appeared to teleport onto each word.
             hop_start = min(word_start, max(prev_end, word_start - max_hop))
             hop_end = min(word_end, max(hop_start, word_start) + flight_dur)
+
             if hop_end - hop_start > 0.01:
+                # Hop between words: Spin using user's customized ball_rotation
                 events.extend(
-                    _arc_steps(prev_x, target_x, hop_start, hop_end, bounce_h)
+                    _arc_steps(prev_x, target_x, hop_start, hop_end, bounce_h, spin_rotations=ball_rotation)
                 )
-            # Hold the ball on the previous word until the hop begins so it is
-            # never missing from the screen between words.
+
             if hop_start > prev_end + 0.01:
-                events.append(
-                    f"Dialogue: 2,{fmt_time(prev_end)},{fmt_time(hop_start)},Default,,0,0,0,,"
-                    f"{{\\pos({prev_x:.0f},{ball_y})}}{ball_style}"
-                )
+                _hold(prev_x, prev_end, hop_start)
             idle_start = hop_end
-        # Once landed, the ball rests on the word, bouncing gently in place.
+
         cycles_done = 0
         idle_h = max(2, round(bounce_h * 0.45))
         while idle_start < word_end - 0.02 and cycles_done < 6:
             cycle_end = min(word_end, idle_start + cycle_len)
             if cycle_end - idle_start > 0.01:
+                # Bounce in place: Spin at 1/3rd the speed of the flight hop
+                idle_rotation = ball_rotation / 3.0
                 events.extend(
-                    _arc_steps(
-                        target_x, target_x, idle_start, cycle_end, idle_h
-                    )
+                    _arc_steps(target_x, target_x, idle_start, cycle_end, idle_h, spin_rotations=idle_rotation)
                 )
             idle_start = cycle_end
             cycles_done += 1
-        # If the bounce cycles ran out before the word ended, rest on the word so
-        # the ball never blinks out mid-word.
-        if idle_start < word_end - 0.01:
-            events.append(
-                f"Dialogue: 2,{fmt_time(idle_start)},{fmt_time(word_end)},Default,,0,0,0,,"
-                f"{{\\pos({target_x:.0f},{ball_y})}}{ball_style}"
-            )
-    return events
 
+        if idle_start < word_end - 0.01:
+            _hold(target_x, idle_start, word_end)
+
+    return events, segments
+
+
+def _resolve_ball_icon_file(ball_icon: str) -> Path | None:
+    """Map a UI ball-icon reference (e.g. ``/icons/foo.png``) to a real file in ICONS_DIR."""
+    raw = str(ball_icon or "").strip()
+    if not raw:
+        return None
+    name = raw.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+    if name.startswith("icons/"):
+        name = name[len("icons/"):]
+    icons_root = ICONS_DIR.resolve()
+    try:
+        candidate = (ICONS_DIR / Path(name).name).resolve()
+        if candidate.is_file() and (
+            candidate == icons_root or icons_root in candidate.parents
+        ):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _write_ball_icon_sendcmd(
+    segments: list[tuple],
+    cmds_path: Path,
+    icon_px: int,
+    render_width: int,
+    render_height: int,
+    fps: int = 30,
+) -> bool:
+    """Sample the ball path and write an FFmpeg ``sendcmd`` script that moves the icon
+    overlay (top-left x/y) frame-by-frame. Returns False if there's nothing to draw."""
+    segs = sorted((s for s in segments if s[1] > s[0]), key=lambda s: s[0])
+    if not segs:
+        return False
+    half = icon_px / 2.0
+    off_x = int(render_width + icon_px + 20)  # parked fully off-screen when idle
+    off_y = 0
+    end_t = max(s[1] for s in segs)
+    total_frames = int(math.ceil(end_t * fps)) + 1
+
+    lines: list[str] = []
+    last_cmd: tuple[int, int] | None = None
+
+    def _emit(t: float, vx: int, vy: int) -> None:
+        nonlocal last_cmd
+        if last_cmd == (vx, vy):
+            return
+        lines.append(f"{t:.3f} overlay x {vx}, overlay y {vy};")
+        last_cmd = (vx, vy)
+
+    _emit(0.0, off_x, off_y)
+    seg_start = 0
+    for frame in range(total_frames):
+        t = frame / fps
+        while seg_start < len(segs) and segs[seg_start][1] < t:
+            seg_start += 1
+        cx = cy = None
+        j = seg_start
+        while j < len(segs) and segs[j][0] <= t:
+            s = segs[j]
+            if s[0] <= t <= s[1]:
+                dur = s[1] - s[0]
+                p = (t - s[0]) / dur if dur > 0 else 0.0
+                cx = s[2] + (s[4] - s[2]) * p
+                cy = s[3] + (s[5] - s[3]) * p
+                break
+            j += 1
+        if cx is None:
+            _emit(t, off_x, off_y)
+        else:
+            _emit(t, int(round(cx - half)), int(round(cy - half)))
+
+    cmds_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
 
 # ===============================================================
 # SECTION: LRC to ASS Conversion (Subtitle Generation for FFmpeg)
 # Purpose: Convert LRC format lyrics to ASS subtitle format with
 #          styling, color fills, effects, and word-level timing
 # ===============================================================
+
 
 def lrc_to_ass(
     lrc_path: Path,
@@ -4240,6 +4955,8 @@ def lrc_to_ass(
     ball_radius: int = 0,
     arc_height: int = 0,
     bounce_per_sec: float = 0.0,
+    ball_rotation: float = 1.5,
+    ball_icon: str = "",
     ball_color: str = "",
     ball_outline_color: str = "",
     outline_width: int = -1,
@@ -4252,8 +4969,17 @@ def lrc_to_ass(
     both_primary_hex: str = "",
     both_secondary_hex: str = "",
     both_outline_hex: str = "",
+    ball_use_overlay: bool = False,
 ):
-    """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering."""
+    """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering.
+
+    Returns a list of ball-icon motion segments ``(t0, t1, x0, y0, x1, y1)`` when
+    ``ball_use_overlay`` is True (the ASS ball is suppressed so the FFmpeg PNG overlay
+    can follow this path without drawing a second ball); otherwise an empty list.
+    """
+
+    # Collected only when a resolvable PNG icon drives the bouncing ball overlay.
+    ball_icon_segments: list[tuple] = []
 
     # Convert Web standard Hex (#RRGGBB) to ASS color format (&HBBGGRR&)
     def to_ass_color(hex_str):
@@ -4279,7 +5005,9 @@ def lrc_to_ass(
 
     gender_schemes = {
         "m": _gender_scheme(male_primary_hex, male_secondary_hex, male_outline_hex),
-        "f": _gender_scheme(female_primary_hex, female_secondary_hex, female_outline_hex),
+        "f": _gender_scheme(
+            female_primary_hex, female_secondary_hex, female_outline_hex
+        ),
         "b": _gender_scheme(both_primary_hex, both_secondary_hex, both_outline_hex),
     }
 
@@ -4644,7 +5372,16 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                 if word_fx_style
                 else ""
             )
-            return lead_tag + r"{" + _word_color(0) + r"\kf" + str(fill_cs) + fx_tag + "}" + word
+            return (
+                lead_tag
+                + r"{"
+                + _word_color(0)
+                + r"\kf"
+                + str(fill_cs)
+                + fx_tag
+                + "}"
+                + word
+            )
         parts = [lead_tag] if lead_tag else []
         prev_end = line_start
         for idx, (word, start, end) in enumerate(timed):
@@ -4661,7 +5398,9 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                 if word_fx_style
                 else ""
             )
-            parts.append(r"{" + _word_color(idx) + r"\kf" + str(fill_cs) + fx_tag + "}" + word)
+            parts.append(
+                r"{" + _word_color(idx) + r"\kf" + str(fill_cs) + fx_tag + "}" + word
+            )
             prev_end = end
         return "".join(parts)
 
@@ -4675,7 +5414,11 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
         for idx, item in enumerate(words):
             prefix = " " if idx > 0 else ""
             parts.append(
-                "{" + _gender_preview_tag(item.get("gender")) + "}" + prefix + item["word"]
+                "{"
+                + _gender_preview_tag(item.get("gender"))
+                + "}"
+                + prefix
+                + item["word"]
             )
         return "".join(parts) or entry["text"]
 
@@ -4757,23 +5500,27 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
             f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{{{pos_tag}}}{effect_mod}{payload}"
         )
         if transition_style == "bouncing-ball" and fx_scope != "word":
-            events.extend(
-                _build_bouncing_ball_events(
-                    _resolve_word_timings(entry, line_end),
-                    center_x,
-                    row_y,
-                    font_size,
-                    ball_color or p_color,
-                    _format_ass_time,
-                    ball_radius=ball_radius,
-                    arc_height=arc_height,
-                    bounce_per_sec=bounce_per_sec,
-                    outline_hex=ball_outline_color,
-                    layout_scale=layout_scale,
-                    text_width=_text_width,
-                    word_padding=word_padding,
-                )
+            ball_events, ball_segs = _build_bouncing_ball_events(
+                _resolve_word_timings(entry, line_end),
+                center_x,
+                row_y,
+                font_size,
+                ball_color or p_color,
+                _format_ass_time,
+                ball_radius=ball_radius,
+                arc_height=arc_height,
+                bounce_per_sec=bounce_per_sec,
+                ball_rotation=ball_rotation,
+                ball_icon=ball_icon,
+                outline_hex=ball_outline_color,
+                layout_scale=layout_scale,
+                text_width=_text_width,
+                word_padding=word_padding,
+                icon_overlay=ball_use_overlay,
             )
+            events.extend(ball_events)
+            if ball_use_overlay:
+                ball_icon_segments.extend(ball_segs)
 
     if reveal_mode == "block":
         # Paginate into fixed groups. Every line in a page is shown together (readable in the
@@ -4826,6 +5573,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
                 )
 
     ass_path.write_text(ass_header + "\n" + "\n".join(events), encoding="utf-8")
+    return ball_icon_segments
 
 
 # ===============================================================
@@ -4833,6 +5581,7 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
 # Purpose: Execute FFmpeg command to render ASS subtitles and
 #          audio onto canvas/video, generating final karaoke video
 # ===============================================================
+
 
 def execute_ffmpeg_burn(
     audio_filename: str,
@@ -4864,6 +5613,8 @@ def execute_ffmpeg_burn(
     ball_radius: int = 26,
     arc_height: int = 78,
     bounce_per_sec: float = 0.1,
+    ball_rotation: float = 1.5,
+    ball_icon: str = "",
     ball_color: str = "",
     ball_outline_color: str = "",
     outline_width: int = -1,
@@ -4924,7 +5675,7 @@ def execute_ffmpeg_burn(
     # Projects separated before the residual instrumental change still hold a
     # thin Demucs no_vocals mix; upgrade it once so renders use the full one.
     if normalized_source != "preview":
-        _ensure_residual_instrumental(project_dir, audio_path, base_name)
+        _ensure_residual_instrumental(project_dir, audio_path, base_name, job_id or "")
     render_audio_path = audio_path
     if normalized_source == "chorus":
         # Always rebuild the chorus stem at render time so it reflects the current
@@ -4963,7 +5714,15 @@ def execute_ffmpeg_burn(
     )
 
     # 1. Compile custom styled Subtitle asset mapping
-    lrc_to_ass(
+    #    Resolve the bouncing-ball PNG icon (if any). When it maps to a real file we
+    #    drive it through an FFmpeg overlay instead of the ASS ball, so libass never
+    #    has to embed a raster image. lrc_to_ass then returns the ball's motion path.
+    ball_icon_file = _resolve_ball_icon_file(ball_icon)
+    use_ball_overlay = bool(ball_icon_file) and (
+        (transition_style or "").strip().lower() == "bouncing-ball"
+        and (fx_scope or "").strip().lower() != "word"
+    )
+    ball_segments = lrc_to_ass(
         lrc_path,
         ass_path,
         font_name,
@@ -4984,6 +5743,8 @@ def execute_ffmpeg_burn(
         ball_radius=ball_radius,
         arc_height=arc_height,
         bounce_per_sec=bounce_per_sec,
+        ball_rotation=ball_rotation,
+        ball_icon=ball_icon,
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
         outline_width=outline_width,
@@ -4996,7 +5757,9 @@ def execute_ffmpeg_burn(
         both_primary_hex=both_primary_color,
         both_secondary_hex=both_secondary_color,
         both_outline_hex=both_outline_color,
+        ball_use_overlay=use_ball_overlay,
     )
+    ball_segments = ball_segments or []
 
     # 2. Build FFmpeg command stack targeting GTX 1070 NVENC cores
     # Default fallback video background container template mapping
@@ -5011,9 +5774,9 @@ def execute_ffmpeg_burn(
             f"color=c={bg_color.lstrip('#')}:s={render_width}x{render_height}:r=30",
         ]
     else:
-        bg_img = project_dir / "custom_bg.jpg"
+        bg_img = project_dir / "custom_bg.png"
         if not bg_img.exists():
-            bg_img = OUTPUT_DIR / "custom_bg.jpg"
+            bg_img = OUTPUT_DIR / "custom_bg.png"
         video_source = ["-loop", "1", "-framerate", "30", "-i", str(bg_img)]
 
     vf_filters = []
@@ -5040,19 +5803,68 @@ def execute_ffmpeg_burn(
         f"ass='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(SERVED_FONTS_DIR)}'"
     )
 
-    cmd = [
-        FFMPEG_BIN,
-        "-y",
-        *video_source,
-        "-i",
-        str(render_audio_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-vf",
-        ",".join(vf_filters),
-    ]
+    # Bouncing-ball PNG overlay: composite the user's icon on top of the burned
+    # subtitles and move it along the ball's motion path via a sendcmd script.
+    overlay_ready = False
+    if use_ball_overlay and ball_segments and ball_icon_file:
+        icon_scale = min(render_width / 1920, render_height / 1080)
+        if ball_radius and ball_radius > 0:
+            radius_px = max(2, round(ball_radius * icon_scale))
+        else:
+            radius_px = max(5, round(font_size * 0.12))
+        icon_px = max(10, round(radius_px * 2.5))
+        cmds_file = project_dir / f"{base_name}_ball_icon_cmds.txt"
+        try:
+            overlay_ready = _write_ball_icon_sendcmd(
+                ball_segments, cmds_file, icon_px, render_width, render_height, fps=30
+            )
+        except Exception as exc:
+            logger.warning("[BALL ICON] failed to build overlay script: %s", exc)
+            overlay_ready = False
+
+    if overlay_ready:
+        init_x = int(render_width + icon_px + 20)
+        base_chain = ",".join(vf_filters)
+        filter_complex = (
+            f"[0:v]{base_chain}[base];"
+            f"[2:v]format=rgba,scale={icon_px}:{icon_px}:force_original_aspect_ratio=decrease,"
+            f"pad={icon_px}:{icon_px}:(ow-iw)/2:(oh-ih)/2:color=black@0.0,"
+            f"rotate=a='2*PI*{ball_rotation:.4f}*t':c=none:ow=iw:oh=ih[ic];"
+            f"[base]sendcmd=f='{_escape_filter_path(cmds_file)}'[basec];"
+            f"[basec][ic]overlay=x={init_x}:y=0:eval=frame[outv]"
+        )
+        logger.info("[BALL ICON] overlaying '%s' (%dpx) in burned video", ball_icon_file.name, icon_px)
+        cmd = [
+            FFMPEG_BIN,
+            "-y",
+            *video_source,
+            "-i",
+            str(render_audio_path),
+            "-loop",
+            "1",
+            "-i",
+            str(ball_icon_file),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[outv]",
+            "-map",
+            "1:a:0",
+        ]
+    else:
+        cmd = [
+            FFMPEG_BIN,
+            "-y",
+            *video_source,
+            "-i",
+            str(render_audio_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-vf",
+            ",".join(vf_filters),
+        ]
     audio_filter = _build_audio_filter(volume=volume, pitch=pitch)
     if audio_filter:
         cmd.extend(["-filter:a", audio_filter])
@@ -5092,6 +5904,7 @@ def execute_ffmpeg_burn(
 #          handling Final/Chorus/Preview render requests
 # ===============================================================
 
+
 @app.post("/api/burn-video")
 def burn_video(
     audio_filename: str = Form(...),
@@ -5119,8 +5932,9 @@ def burn_video(
     render_height: int = Form(720),
     ball_radius: int = Form(26),
     arc_height: int = Form(78),
-    arc_fraction: float = Form(0.35),
     bounce_per_sec: float = Form(0.1),
+    ball_rotation: float = Form(1.5),
+    ball_icon: str = Form(""),
     ball_color: str = Form("#ffffff"),
     ball_outline_color: str = Form("#000000"),
     outline_width: int = Form(-1),
@@ -5142,9 +5956,8 @@ def burn_video(
         project_name = audio_path.parent.name
         rel_audio = _relative_to_output(audio_path)
     except Exception:
-        project_name = (
-            Path(audio_filename).parts[0] if "/" in str(audio_filename) else ""
-        )
+        parts = Path(audio_filename).parts
+        project_name = parts[-2] if len(parts) >= 2 else ""
 
     safe_project = _safe_output_name(
         project_name, fallback_stem=Path(rel_audio).stem or "project"
@@ -5204,8 +6017,9 @@ def burn_video(
         render_resolution=render_resolution,
         ball_radius=ball_radius,
         arc_height=arc_height,
-        arc_fraction=arc_fraction,
         bounce_per_sec=bounce_per_sec,
+        ball_icon=ball_icon,
+        ball_rotation=ball_rotation,
         ball_color=ball_color,
         ball_outline_color=ball_outline_color,
         outline_width=outline_width,
@@ -5229,13 +6043,12 @@ def burn_video(
     return {"status": "queued", "message": "Queued FFmpeg render job.", "job": job}
 
 
-
-
 # ===============================================================
 # SECTION: API Endpoints - Job Management & Utilities
 # Purpose: List/cancel jobs, manage fonts/themes, export projects,
 #          save/load project state, and health checks
 # ===============================================================
+
 
 @app.get("/api/jobs")
 def list_jobs(project_name: str = ""):
@@ -5271,6 +6084,24 @@ def cancel_job(job_id: str):
     }
 
 
+@app.post("/api/jobs/clear")
+def clear_inactive_jobs():
+    with JOB_LOCK:
+        # Identify jobs that are no longer actively queued or running
+        inactive_ids = [
+            job_id for job_id, job in JOBS.items()
+            if job.get("status") in {"completed", "failed", "cancelled"}
+        ]
+
+        # Remove them from the global state
+        for jid in inactive_ids:
+            JOBS.pop(jid, None)
+            if jid in JOB_QUEUE:
+                JOB_QUEUE.remove(jid)
+
+    return {"status": "success", "cleared_count": len(inactive_ids)}
+
+
 @app.get("/api/get-fonts")
 def get_fonts():
     return {"fonts": _refresh_font_cache()}
@@ -5278,7 +6109,12 @@ def get_fonts():
 
 @app.get("/api/themes")
 def get_themes():
-    return {"themes": _load_theme_catalog()}
+    try:
+        return {"themes": _load_theme_catalog()}
+    except Exception as exc:
+        # Never 500 the theme picker; the frontend falls back to built-in themes.
+        logger.warning("[THEMES] Failed to build theme catalog: %s", exc)
+        return {"themes": [], "message": f"Theme catalog error: {exc}"}
 
 
 @app.get("/api/debug-report")
@@ -5330,11 +6166,11 @@ def load_lyrics(filename: str):
 
 
 @app.get("/api/list-files")
-def list_files(sources_only: bool = False):
-    projects = _list_project_manifests()
+def list_files(sources_only: bool = False, profile: str = ""):
+    projects = _list_project_manifests(profile)
     if sources_only:
         projects = [item for item in projects if item.get("audio_filename")]
-    return {"files": projects}
+    return {"files": projects, "profile": _safe_profile_name(profile) if profile else _active_profile()}
 
 
 @app.get("/api/export-project")
@@ -5469,10 +6305,10 @@ def save_project_state(audio_filename: str = Form(...), state_json: str = Form(.
         json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    global_bg = OUTPUT_DIR / "custom_bg.jpg"
+    global_bg = OUTPUT_DIR / "custom_bg.png"
     if parsed.get("preview", {}).get("bgType") == "image" and global_bg.exists():
         try:
-            shutil.copy2(global_bg, project_dir / "custom_bg.jpg")
+            shutil.copy2(global_bg, project_dir / "custom_bg.png")
         except Exception:
             pass
 
@@ -5485,18 +6321,52 @@ def save_project_state(audio_filename: str = Form(...), state_json: str = Form(.
 
 @app.post("/api/upload-bg")
 def upload_bg(file: UploadFile = File(...), audio_filename: str = Form("")):
-    target = OUTPUT_DIR / "custom_bg.jpg"
+    target = OUTPUT_DIR / "custom_bg.png"
     if audio_filename:
         try:
             audio_path = _ensure_project_layout_for_audio(
                 _resolve_output_file(audio_filename)
             )
-            target = audio_path.parent / "custom_bg.jpg"
+            target = audio_path.parent / "custom_bg.png"
         except FileNotFoundError:
             pass
     with target.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     return {"status": "success"}
+
+
+# Image formats a browser can render for the bouncing-ball icon preview.
+_ICON_UPLOAD_EXTS = {".png", ".gif", ".webp", ".jpg", ".jpeg", ".bmp", ".ico", ".svg"}
+
+
+@app.post("/api/upload-icon")
+def upload_icon(file: UploadFile = File(...)):
+    """Store a user-picked ball icon (PNG, etc.) under ICONS_DIR and return its
+    browser-reachable path (served by the /icons static mount)."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ICON_UPLOAD_EXTS:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "error",
+                "message": f"Unsupported icon type: {suffix or '(none)'}. "
+                f"Allowed: {', '.join(sorted(_ICON_UPLOAD_EXTS))}",
+            },
+        )
+    safe_stem = _safe_output_name(file.filename or "icon", fallback_stem="icon")
+    target = ICONS_DIR / f"{safe_stem}{suffix}"
+    counter = 2
+    while target.exists():
+        target = ICONS_DIR / f"{safe_stem}_{counter}{suffix}"
+        counter += 1
+    try:
+        with target.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    finally:
+        file.file.close()
+    icon_path = f"/icons/{target.name}"
+    logger.info("[BALL ICON] uploaded %s -> %s", file.filename, icon_path)
+    return {"status": "success", "path": icon_path, "filename": target.name}
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -5507,6 +6377,14 @@ def health():
 @app.get("/", response_class=HTMLResponse)
 def index_page():
     return (WORKSPACE / "index.html").read_text()
+
+
+# Relocate any pre-profile projects/media into the Default profile on startup so
+# the whole app agrees on the output/<profile>/<project>/ layout.
+try:
+    _migrate_legacy_layout()
+except Exception as _exc:  # pragma: no cover - defensive startup guard
+    logger.warning("[MIGRATE] legacy layout migration skipped: %s", _exc)
 
 
 if __name__ == "__main__":
