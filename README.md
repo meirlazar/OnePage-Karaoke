@@ -6,20 +6,15 @@
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 
+<img width="893" height="670" alt="image" src="https://github.com/user-attachments/assets/8cd1bf29-4bd3-45d1-ac5e-47dce8b47936" />
 
-<img width="895" height="698" alt="image" src="https://github.com/user-attachments/assets/569e213c-f779-4cfa-87f6-45714d532f8a" />
 
 #### OnePage Karaoke is the culmination of wanting a self-hosted, simple but highly flexible WebUI-driven karaoke song generator. 
-It was born out of my love and passion for singing karaoke songs with my kids but waiting forever for someone to create a karaoke song from a new release drove me crazy.
-So I dug around and found all the good karaoke creation tools were either strictly for Windows, or pricey, gimmicky, subscription-based, overly complex, or too automated, too limited, or simply didn't work. 
-You can find a messload of karaoke generators on github, every day another popping up. 
-These are usually one-commit-wonders that make you wonder how much commitment the developer put into the code. I got tired of building images for hours, watching & praying pip doesn't do what pip does best, give up.
+It was born out of my love & passion for singing karaoke songs (terribly) with my kids. Waiting for a new song to have a karaoke version took an obscene amount of time, so I took to the old saying, if you want something done right, get AI to do it for you. That's only half true. My vision and constant tweaks have turned this creation into one of the best karaoke generation suites available (IMHO) and rivals paid versions out there. You be the judge.
 
-I wanted it to usable even if you don't want to spend a ridiculous amount on a GPU so a decent LLM can accurately get the word-level timing correct. 
-I wanted cool effects, duet-capabilities, chorus or no chorus vocals...
-Or even better, I wanted absolute flexibility and control over everything, from the website theme to every little detail in the song itself.
-I wanted it to look professional, but not have the interface so complex, that only an engineer could understand it.
-I hope you enjoy it, you don't even have to buy me a coffee, I just wanted to give something to the world because it's the right thing to do. 
+
+Here is what you get in a nutshell for absolutely nothing. A full feature, easy-to-use, insanely flexible/customizable, powerful karaoke suite of tools, all on one page. Render the karaoke songs, the way you want them, with nothing left to chance. The resolution you want, with or without vocals of your choice, the timing you want, the effects, fonts, colors, duet modes, you want a bouncing ball jumping word to word? Not me, I want any png file I choose bouncing around, or maybe not, scrolling, or maybe you want a background picture, whatever you got it. Will it look professional? That goes without saying. No one wants to sing karaoke songs that look like someone made it in their dingy basement. You want absolute power and control? I can't give you power, but you now have full control. Or even better, you want absolute flexibility and control over everything, from the website theme to every little detail in the song itself. The interface is highly intuitive, so you do not need to be a sound engineer to figure it out.
+I hope you enjoy it, you don't even have to buy me a coffee, I just want to give something to the world that I enjoyed making and using. Play it forward and sing. 
 
 ## 🎉 v2.0.0 New Features (from v1.0.0)
 ### Canvas & Rendering
