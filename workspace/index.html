@@ -158,6 +158,15 @@
         min-height: 0;
         flex: 1 1 auto;
       }
+      /* Collapsed panel: shrink to just the header instead of leaving an empty
+         box. The card no longer grows to fill the panel, and the panel no
+         longer stretches to fill its grid cell, so the layout actually closes
+         up. */
+      .dock-panel.collapsed { align-self: start; }
+      .card.collapsed {
+        flex: 0 0 auto;
+        min-height: 0;
+      }
       .dock-panel.dock-dragging { opacity: 0.55; pointer-events: none; }
       .dock-panel.dock-drop-target > .card,
       .dock-panel.dock-drop-target > .preview-pane {
@@ -1131,6 +1140,13 @@
             <button class="btn render-action-btn render-action-primary" onclick="startRender('final')" title="Standard Karaoke Video (Instrumental Audio Only - No Vocals)">
               <span class="render-action-title">Create Std. Karaoke</span>
               <span class="render-action-sub">Instrumental only</span>
+            </button>
+          </div>
+          <!-- CDG+MP3 karaoke disc export (zipped matched-name pair) -->
+          <div class="render-actions" style="margin-top: 6px;">
+            <button class="btn render-action-btn" onclick="startCdgExport('final')" title="Export a CDG+MP3 karaoke disc pair (zipped) using the instrumental audio">
+              <span class="render-action-title">Export CDG + MP3</span>
+              <span class="render-action-sub">Karaoke disc (.zip)</span>
             </button>
           </div>
           <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
@@ -2714,6 +2730,13 @@
         if (!section) return;
         const collapsed = section.classList.toggle("hidden");
         button.classList.toggle("collapsed", collapsed);
+        // Shrink the whole panel to just its header instead of leaving an empty
+        // box: the card stops stretching and the docked panel aligns to the top
+        // of its grid cell so neighbours can reclaim the freed space.
+        const card = button.closest(".card");
+        if (card) card.classList.toggle("collapsed", collapsed);
+        const panel = button.closest(".dock-panel");
+        if (panel) panel.classList.toggle("collapsed", collapsed);
       }
 
       function onFontSizeChanged() { updatePreview(); }
@@ -3264,6 +3287,23 @@
         fd.append("profile", activeProfile);
       }
 
+      // Read whichever per-effect sub-option selects are currently injected in
+      // the FX panel. Only present selects are returned, so the backend keeps
+      // its defaults for everything else.
+      function collectFxOptions() {
+        const ids = [
+          "fadeIntensity", "zoomScale", "blurAmount", "rotateDirection",
+          "glimmerIntensity", "shakeIntensity", "flipDirection", "pulseIntensity",
+          "swayAmount", "skewDirection", "stampStyle", "focusZoom",
+        ];
+        const out = {};
+        ids.forEach((id) => {
+          const el = document.getElementById(id);
+          if (el && el.value) out[id] = el.value;
+        });
+        return out;
+      }
+
       function capturePreviewConfig() {
         const resolution = document.getElementById("previewResolution")?.value || "1280x720";
         const [renderWidth, renderHeight] = resolution.split("x").map((value) => Number(value));
@@ -3308,6 +3348,7 @@
           ball_outline_color: document.getElementById("ballOutlineColor")?.value || "#000000",
           ball_icon: document.getElementById("ballIcon")?.value || "",
           ball_rotation: parseFloat(document.getElementById("ballRotation")?.value || "1.5"),
+          fx_options: JSON.stringify(collectFxOptions()),
       };
     }
 
@@ -3938,6 +3979,9 @@
           }
           const metaText = metaBits.join(" | ");
           const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+          const downloadLink = (job.status === "completed" && job.output_url)
+            ? `<a class="btn btn-small" href="${job.output_url}" download title="Download ${job.output_filename || "output"}">Download</a>`
+            : (job.output_filename ? `<span style="font-size:11px;">${job.output_filename}</span>` : "");
           item.innerHTML = `
             <div class="job-top"><div><div class="job-label">${liveStage}</div><div class="job-sub" title="${job.label || ""}">${job.label || ""}</div></div><span class="state-badge ${statClass}">${statusLabel}</span></div>
             <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${queueLabel || job.message || "Working..."}</div>
@@ -3945,7 +3989,7 @@
             <div class="job-bar"><div class="job-bar-fill" style="width:${progress}%;"></div></div>
             <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center;">
                 <span style="font-size:11px;">${progress}%</span>
-                ${canCancel ? `<button class="btn btn-small" data-job-id="${job.id}">Stop</button>` : `<span style="font-size:11px;">${job.output_filename || ""}</span>`}
+                ${canCancel ? `<button class="btn btn-small" data-job-id="${job.id}">Stop</button>` : downloadLink}
             </div>`;
           if (canCancel) item.querySelector("button").addEventListener("click", () => cancelJob(job.id));
           container.appendChild(item);
@@ -4829,6 +4873,24 @@
         const res = await fetch("/api/burn-video", { method: "POST", body: fd });
         const data = await res.json();
         setStatus(data.message || (res.ok ? "Render Queued" : "Render failed"), !res.ok);
+        if (res.ok) await loadJobs();
+      }
+
+      async function startCdgExport(renderSource = "final") {
+        if (!selectedAudioFilename) { alert("Select media first."); return; }
+        const cfg = previewConfigLocked && previewConfigSnapshot ? previewConfigSnapshot : capturePreviewConfig();
+        const fd = new FormData();
+        fd.append("audio_filename", selectedAudioFilename);
+        fd.append("font_name", cfg.font_name || "Arial");
+        fd.append("primary_color", cfg.primary_color || "#ffe14d");
+        fd.append("secondary_color", cfg.secondary_color || "#9fb4ff");
+        fd.append("bg_color", cfg.bg_color || "#000820");
+        fd.append("render_source", renderSource);
+        fd.append("lines_per_page", cfg.preview_line_count || "4");
+        setStatus("Queuing CDG+MP3 export...");
+        const res = await fetch("/api/burn-cdg", { method: "POST", body: fd });
+        const data = await res.json();
+        setStatus(data.message || (res.ok ? "CDG+MP3 Queued" : "CDG export failed"), !res.ok);
         if (res.ok) await loadJobs();
       }
 

@@ -27,6 +27,8 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import cdg_karaoke
+
 # ===============================================================
 # SECTION: Application Setup & Configuration
 # Purpose: Initialize FastAPI app, set up directories, static file
@@ -206,6 +208,17 @@ async def _cleanup_after_every_request(request, call_next):
     return response
 
 
+def _job_output_url(job: dict) -> str:
+    """Build a /files download URL for a completed job's output, if any."""
+    out_name = str(job.get("output_filename", "") or "").strip()
+    if not out_name:
+        return ""
+    audio_rel = str(job.get("audio_filename", "") or "").strip()
+    parent = Path(audio_rel).parent.as_posix() if audio_rel else ""
+    rel = f"{parent}/{out_name}" if parent and parent not in (".", "") else out_name
+    return "/files/" + quote(rel)
+
+
 def _job_view(job: dict) -> dict:
     queue_position = 0
     if job.get("status") == "queued":
@@ -244,6 +257,7 @@ def _job_view(job: dict) -> dict:
         "volume": job.get("volume", 1),
         "details": job.get("details", ""),
         "output_filename": job.get("output_filename", ""),
+        "output_url": _job_output_url(job),
         "render_width": job.get("render_width", 0),
         "render_height": job.get("render_height", 0),
         "render_resolution": job.get("render_resolution", ""),
@@ -1835,6 +1849,141 @@ def _run_url_job(
 # ===============================================================
 
 
+def _resolve_font_file(font_name: str):
+    """Locate the served .ttf/.otf whose stem matches ``font_name`` (or None)."""
+    requested = str(font_name or "").strip()
+    if not requested:
+        return None
+    try:
+        for path in SERVED_FONTS_DIR.iterdir():
+            if path.is_file() and path.stem.lower() == requested.lower():
+                return path
+    except Exception:
+        pass
+    return None
+
+
+def _select_source_audio_existing(
+    project_dir: Path, base_name: str, audio_path: Path, normalized_source: str
+) -> Path:
+    """Pick the best EXISTING audio file for a render source without triggering
+    any heavy regeneration (used by the lightweight CDG export)."""
+    minus_track = project_dir / f"{base_name}_minus.mp3"
+    chorus_track = project_dir / f"{base_name}_minus_chorus.mp3"
+    stem_dir = _find_project_stems(project_dir, base_name)
+    demucs_no_vocals = stem_dir / "no_vocals.wav" if stem_dir else None
+    if normalized_source == "preview":
+        return audio_path
+    if normalized_source == "chorus" and chorus_track.exists() and chorus_track.is_file():
+        return chorus_track
+    if minus_track.exists() and minus_track.is_file():
+        return minus_track
+    if demucs_no_vocals and demucs_no_vocals.exists() and demucs_no_vocals.is_file():
+        return demucs_no_vocals
+    return audio_path
+
+
+def _run_cdg_job(
+    job_id: str,
+    audio_filename: str,
+    font_name: str = "Arial",
+    primary_color: str = "#ffe14d",
+    secondary_color: str = "#9fb4ff",
+    bg_color: str = "#000820",
+    render_source: str = "final",
+    lines_per_page: int = 4,
+    output_filename: str = "",
+    render_token: str = "",
+    project_name: str = "",
+    **_ignored,
+) -> None:
+    """Build a CDG+MP3 karaoke package (zipped) from a project's .lrc + audio."""
+    _update_job(job_id, stage="CDG export", message="Preparing lyrics…", progress=5)
+    audio_path = _ensure_project_layout_for_audio(_resolve_output_file(audio_filename))
+    project_dir = audio_path.parent
+    base_name = audio_path.stem
+    lrc_path = _find_project_asset(project_dir, ".lrc", base_name)
+    if not lrc_path:
+        raise FileNotFoundError(
+            f"No .lrc lyrics file found in project: {project_dir.name}"
+        )
+
+    normalized_source = str(render_source or "final").strip().lower()
+    if normalized_source not in {"preview", "final", "chorus"}:
+        normalized_source = "final"
+    source_audio = _select_source_audio_existing(
+        project_dir, base_name, audio_path, normalized_source
+    )
+
+    token = str(render_token or datetime.now().strftime("%Y%m%d_%H%M%S"))
+    label = _safe_output_name(project_dir.name, fallback_stem=base_name)
+    stem_out = f"{label}_CDG_{token}"
+    cdg_path = project_dir / f"{stem_out}.cdg"
+    mp3_path = project_dir / f"{stem_out}.mp3"
+
+    # 1. Transcode the selected audio to a standard CDG-friendly MP3.
+    _update_job(job_id, message="Encoding MP3 audio…", progress=25)
+    res = subprocess.run(
+        [
+            FFMPEG_BIN, "-y", "-i", str(source_audio),
+            "-map", "a:0", "-c:a", "libmp3lame", "-b:a", "256k",
+            "-ar", "44100", "-ac", "2", str(mp3_path),
+        ],
+        check=False, capture_output=True, text=True,
+    )
+    if res.returncode != 0 or not mp3_path.exists():
+        raise RuntimeError(
+            "FFmpeg could not create the MP3 for CDG export: "
+            + (res.stderr or "")[-300:]
+        )
+
+    # 2. Encode the CDG subcode stream from the lyric timing.
+    _update_job(job_id, message="Rendering CDG graphics…", progress=55)
+    duration = _probe_media_duration(mp3_path)
+    font_file = _resolve_font_file(font_name)
+    try:
+        lines_pp = max(1, min(6, int(lines_per_page or 4)))
+    except Exception:
+        lines_pp = 4
+    try:
+        summary = cdg_karaoke.render_cdg(
+            lrc_path.read_text(encoding="utf-8", errors="ignore"),
+            cdg_path,
+            font_path=font_file,
+            audio_duration=duration,
+            bg_hex=bg_color or "#000820",
+            base_hex=secondary_color or "#9fb4ff",
+            highlight_hex=primary_color or "#ffe14d",
+            lines_per_page=lines_pp,
+        )
+    except cdg_karaoke.CdgError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    # 3. Zip the matched-name .cdg + .mp3 (the standard karaoke pairing).
+    _update_job(job_id, message="Packaging .zip…", progress=85)
+    zip_name = Path(output_filename).name if output_filename else f"{stem_out}.zip"
+    zip_path = project_dir / zip_name
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(cdg_path, arcname=f"{stem_out}.cdg")
+        zf.write(mp3_path, arcname=f"{stem_out}.mp3")
+
+    logger.info(
+        "[CDG END] job=%s zip=%s lines=%s pages=%s dur=%ss",
+        job_id, zip_path.name, summary["lines"], summary["pages"], summary["duration"],
+    )
+    _update_job(
+        job_id,
+        status="completed",
+        progress=100,
+        output_filename=zip_path.name,
+        message=(
+            f"CDG+MP3 ready: {summary['lines']} lines / {summary['pages']} pages / "
+            f"{summary['duration']}s"
+        ),
+    )
+
+
+
 def _run_render_job(
     job_id: str,
     audio_filename: str,
@@ -1881,6 +2030,7 @@ def _run_render_job(
     both_primary_color: str = "",
     both_secondary_color: str = "",
     both_outline_color: str = "",
+    fx_options: dict | None = None,
 ) -> None:
     # NOTE: "bouncing-ball" is rendered through the standard FFmpeg/ASS path
     # below (see _build_bouncing_ball_events), which correctly honors
@@ -1956,6 +2106,7 @@ def _run_render_job(
                 both_primary_color=both_primary_color,
                 both_secondary_color=both_secondary_color,
                 both_outline_color=both_outline_color,
+                fx_options=fx_options,
             )
             _update_job(job_id, render_device=actual_device)
             logger.info(
@@ -2265,6 +2416,9 @@ def _job_worker_loop() -> None:
             elif job["runner"] == "render":
                 logger.info("[WORKER] start job=%s runner=render", job["id"])
                 _run_render_job(job["id"], **job["runner_kwargs"])
+            elif job["runner"] == "cdg":
+                logger.info("[WORKER] start job=%s runner=cdg", job["id"])
+                _run_cdg_job(job["id"], **job["runner_kwargs"])
             elif job["runner"] == "lyrics":
                 logger.info("[WORKER] start job=%s runner=lyrics", job["id"])
                 _run_lyrics_fetch_job(job["id"], **job["runner_kwargs"])
@@ -4970,6 +5124,7 @@ def lrc_to_ass(
     both_secondary_hex: str = "",
     both_outline_hex: str = "",
     ball_use_overlay: bool = False,
+    fx_options: dict | None = None,
 ):
     """Converts standard LRC files into stylized ASS subtitles for FFmpeg rendering.
 
@@ -5468,22 +5623,84 @@ Style: Upcoming,{font_name},{font_size},{s_color},{s_color},{o_color},&H00000000
         if fx_scope == "word" or transition_style == "bouncing-ball":
             return ""
         half_speed = max(1, speed_ms // 2)
+        opts = fx_options or {}
+
+        def _opt(key: str) -> str:
+            val = opts.get(key)
+            return str(val).strip().lower() if val is not None else ""
+
+        # --- fade: intensity scales the fade in/out duration ---
+        fade_mult = {"light": 0.6, "medium": 1.0, "heavy": 1.6}.get(
+            _opt("fadeIntensity"), 1.0
+        )
+        fade_t = max(1, int(speed_ms * fade_mult))
+        # --- zoom: how small the line starts before growing to 100% ---
+        zoom_start = {"subtle": 92, "medium": 84, "dramatic": 68}.get(
+            _opt("zoomScale"), 84
+        )
+        # --- blur: starting blur radius ---
+        blur_start = {"5": 4, "10": 6, "20": 10}.get(_opt("blurAmount"), 6)
+        # --- rotate-360: spin direction ---
+        rot_deg = -360 if _opt("rotateDirection") == "ccw" else 360
+        # --- glimmer: starting transparency of the shimmer ---
+        glim_alpha = {"soft": "&H33&", "normal": "&H55&", "bright": "&H77&"}.get(
+            _opt("glimmerIntensity"), "&H55&"
+        )
+        # --- shake: wobble magnitude in degrees ---
+        shake_deg = {"small": 2, "medium": 3, "strong": 5}.get(
+            _opt("shakeIntensity"), 3
+        )
+        s1, s2, s3 = speed_ms // 3, speed_ms * 2 // 3, speed_ms
+        # --- flip: axis the text flips around ---
+        flip_axis = "fscy" if _opt("flipDirection") == "vertical" else "fscx"
+        # --- pulse: peak scale of the heartbeat ---
+        pulse_peak = {"subtle": 104, "normal": 110, "strong": 122}.get(
+            _opt("pulseIntensity"), 110
+        )
+        # --- sway: tilt amplitude in degrees ---
+        sway_deg = {"slight": 6, "normal": 12, "extreme": 20}.get(
+            _opt("swayAmount"), 12
+        )
+        # --- skew: which axis (or both) the shear animates on ---
+        skew_dir = _opt("skewDirection")
+        if skew_dir == "y":
+            skew_tag = rf"\fay-0.45\t(0,{half_speed},\fay0.35)\t({half_speed},{speed_ms},\fay0)"
+        elif skew_dir == "both":
+            skew_tag = rf"\fax-0.45\fay-0.45\t(0,{half_speed},\fax0.35\fay0.35)\t({half_speed},{speed_ms},\fax0\fay0)"
+        else:
+            skew_tag = rf"\fax-0.45\t(0,{half_speed},\fax0.35)\t({half_speed},{speed_ms},\fax0)"
+        # --- stamp: how the text slams into place ---
+        stamp_style = _opt("stampStyle")
+        if stamp_style == "fade":
+            stamp_tag = rf"\fscx120\fscy120\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\alpha&H00&)"
+        elif stamp_style == "bounce":
+            stamp_tag = rf"\fscx150\fscy150\alpha&HFF&\t(0,{half_speed},\fscx95\fscy95\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)"
+        else:
+            stamp_tag = rf"\fscx138\fscy138\bord12\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\bord5\alpha&H00&)"
+        # --- focus: optional zoom layered on the blur-in ---
+        focus_zoom = _opt("focusZoom")
+        if focus_zoom in {"1.2", "1.5", "2.0"}:
+            fz = int(float(focus_zoom) * 100)
+            focus_tag = rf"{{\blur9\fscx{fz}\fscy{fz}\alpha&HFF&\t(0,{speed_ms},\blur0\fscx100\fscy100\alpha&H00&)}}"
+        else:
+            focus_tag = rf"{{\blur9\alpha&HFF&\t(0,{speed_ms},\blur0\alpha&H00&)}}"
+
         table = {
-            "fade": rf"{{\fad({speed_ms},{speed_ms})}}",
+            "fade": rf"{{\fad({fade_t},{fade_t})}}",
             "pop": rf"{{\fscX112\fscY112\t(0,{speed_ms},\fscX100\fscY100)}}",
             "slide": rf"{{\move({center_x},{round(render_height * 0.889)},{center_x},{center_y},0,{speed_ms})}}",
-            "zoom": rf"{{\fscX84\fscY84\t(0,{speed_ms},\fscX100\fscY100)}}",
+            "zoom": rf"{{\fscX{zoom_start}\fscY{zoom_start}\t(0,{speed_ms},\fscX100\fscY100)}}",
             "drop": rf"{{\move({center_x},{round(render_height * 0.278)},{center_x},{center_y},0,{speed_ms})}}",
-            "blur": rf"{{\blur6\t(0,{speed_ms},\blur0)}}",
-            "rotate-360": rf"{{\frz360\t(0,{speed_ms},\frz0)}}",
-            "glimmer": rf"{{\alpha&H55&\t(0,{half_speed},\alpha&H00&)\t({half_speed},{speed_ms},\alpha&H55&)}}",
-            "shake": rf"{{\t(0,{speed_ms // 3},\frx3\fry-3)\t({speed_ms // 3},{speed_ms * 2 // 3},\frx-3\fry3)\t({speed_ms * 2 // 3},{speed_ms},\frx0\fry0)}}",
-            "flip": rf"{{\fscx20\t(0,{speed_ms},\fscx100)}}",
-            "pulse": rf"{{\fscx82\fscy82\alpha&H55&\t(0,{half_speed},\fscx110\fscy110\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)}}",
-            "sway": rf"{{\frz-12\t(0,{half_speed},\frz10)\t({half_speed},{speed_ms},\frz0)}}",
-            "skew": rf"{{\fax-0.45\t(0,{half_speed},\fax0.35)\t({half_speed},{speed_ms},\fax0)}}",
-            "stamp": rf"{{\fscx138\fscy138\bord12\alpha&HFF&\t(0,{speed_ms},\fscx100\fscy100\bord5\alpha&H00&)}}",
-            "focus": rf"{{\blur9\alpha&HFF&\t(0,{speed_ms},\blur0\alpha&H00&)}}",
+            "blur": rf"{{\blur{blur_start}\t(0,{speed_ms},\blur0)}}",
+            "rotate-360": rf"{{\frz{rot_deg}\t(0,{speed_ms},\frz0)}}",
+            "glimmer": rf"{{\alpha{glim_alpha}\t(0,{half_speed},\alpha&H00&)\t({half_speed},{speed_ms},\alpha{glim_alpha})}}",
+            "shake": rf"{{\t(0,{s1},\frx{shake_deg}\fry-{shake_deg})\t({s1},{s2},\frx-{shake_deg}\fry{shake_deg})\t({s2},{s3},\frx0\fry0)}}",
+            "flip": rf"{{\{flip_axis}20\t(0,{speed_ms},\{flip_axis}100)}}",
+            "pulse": rf"{{\fscx82\fscy82\alpha&H55&\t(0,{half_speed},\fscx{pulse_peak}\fscy{pulse_peak}\alpha&H00&)\t({half_speed},{speed_ms},\fscx100\fscy100)}}",
+            "sway": rf"{{\frz-{sway_deg}\t(0,{half_speed},\frz{sway_deg})\t({half_speed},{speed_ms},\frz0)}}",
+            "skew": rf"{{{skew_tag}}}",
+            "stamp": rf"{{{stamp_tag}}}",
+            "focus": focus_tag,
         }
         mod = table.get(transition_style, "")
         if reveal_mode == "continuous" and transition_style in {"slide", "drop"}:
@@ -5627,6 +5844,7 @@ def execute_ffmpeg_burn(
     both_primary_color: str = "",
     both_secondary_color: str = "",
     both_outline_color: str = "",
+    fx_options: dict | None = None,
 ):
     """Render a karaoke video at the requested resolution using NVENC when available."""
     audio_path = _resolve_output_file(audio_filename)
@@ -5758,6 +5976,7 @@ def execute_ffmpeg_burn(
         both_secondary_hex=both_secondary_color,
         both_outline_hex=both_outline_color,
         ball_use_overlay=use_ball_overlay,
+        fx_options=fx_options,
     )
     ball_segments = ball_segments or []
 
@@ -5905,6 +6124,95 @@ def execute_ffmpeg_burn(
 # ===============================================================
 
 
+# ---------------------------------------------------------------
+# Effect input validation (whitelists + clamps)
+# ---------------------------------------------------------------
+_VALID_TRANSITION_STYLES = frozenset(
+    {
+        "none",
+        "fade",
+        "pop",
+        "slide",
+        "zoom",
+        "drop",
+        "blur",
+        "bouncing-ball",
+        "rotate-360",
+        "glimmer",
+        "shake",
+        "flip",
+        "pulse",
+        "sway",
+        "skew",
+        "stamp",
+        "focus",
+    }
+)
+_VALID_TEXT_EFFECTS = frozenset({"none", "shadow", "hard-shadow", "glow", "neon"})
+_VALID_REVEAL_MODES = frozenset({"continuous", "block", "eager"})
+_VALID_FX_SCOPES = frozenset({"page", "line", "word"})
+_VALID_BG_TYPES = frozenset({"solid", "gradient", "image", "video"})
+
+# Per-effect sub-option whitelist. Keys are the frontend element IDs and values
+# are the only accepted choices; anything else is dropped so nothing arbitrary
+# can flow into the ASS override tags.
+_VALID_FX_OPTIONS: dict[str, frozenset] = {
+    "fadeIntensity": frozenset({"light", "medium", "heavy"}),
+    "zoomScale": frozenset({"subtle", "medium", "dramatic"}),
+    "blurAmount": frozenset({"5", "10", "20"}),
+    "rotateDirection": frozenset({"cw", "ccw"}),
+    "glimmerIntensity": frozenset({"soft", "normal", "bright"}),
+    "shakeIntensity": frozenset({"small", "medium", "strong"}),
+    "flipDirection": frozenset({"horizontal", "vertical"}),
+    "pulseIntensity": frozenset({"subtle", "normal", "strong"}),
+    "swayAmount": frozenset({"slight", "normal", "extreme"}),
+    "skewDirection": frozenset({"x", "y", "both"}),
+    "stampStyle": frozenset({"punch", "fade", "bounce"}),
+    "focusZoom": frozenset({"1.2", "1.5", "2.0"}),
+}
+
+
+def _validate_choice(value: str, allowed: frozenset, default: str) -> str:
+    """Return ``value`` if it is in ``allowed`` (case-insensitive), else ``default``."""
+    v = str(value or "").strip().lower()
+    return v if v in allowed else default
+
+
+def _clamp_int(value, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(hi, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp_float(value, lo: float, hi: float, default: float) -> float:
+    try:
+        return max(lo, min(hi, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _sanitize_fx_options(raw: str) -> dict:
+    """Parse the fx_options JSON string and keep only whitelisted key/value pairs."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    clean: dict[str, str] = {}
+    for key, allowed in _VALID_FX_OPTIONS.items():
+        val = data.get(key)
+        if val is None:
+            continue
+        sval = str(val).strip().lower()
+        if sval in allowed:
+            clean[key] = sval
+    return clean
+
+
 @app.post("/api/burn-video")
 def burn_video(
     audio_filename: str = Form(...),
@@ -5947,6 +6255,7 @@ def burn_video(
     both_primary_color: str = Form("#ff4d4d"),
     both_secondary_color: str = Form("#8b1a1a"),
     both_outline_color: str = Form("#2a0606"),
+    fx_options: str = Form(""),
 ):
     rel_audio = audio_filename
     try:
@@ -5962,6 +6271,24 @@ def burn_video(
     safe_project = _safe_output_name(
         project_name, fallback_stem=Path(rel_audio).stem or "project"
     )
+    # Whitelist/clamp all effect-related inputs so malformed or hostile form
+    # values can never reach the ASS generator; unknown choices fall back to a
+    # safe default rather than raising.
+    transition_style = _validate_choice(
+        transition_style, _VALID_TRANSITION_STYLES, "none"
+    )
+    text_effect = _validate_choice(text_effect, _VALID_TEXT_EFFECTS, "none")
+    reveal_mode = _validate_choice(reveal_mode, _VALID_REVEAL_MODES, "continuous")
+    fx_scope = _validate_choice(fx_scope, _VALID_FX_SCOPES, "page")
+    bg_type = _validate_choice(bg_type, _VALID_BG_TYPES, "solid")
+    fx_speed = _clamp_float(fx_speed, 0.08, 1.8, 0.6)
+    preview_line_count = _clamp_int(preview_line_count, 1, 4, 3)
+    font_size = _clamp_int(font_size, 8, 400, 72)
+    line_spacing = _clamp_int(line_spacing, 0, 400, 30)
+    word_padding = _clamp_int(word_padding, 0, 200, 0)
+    pitch = _clamp_float(pitch, 0.5, 2.0, 1.0)
+    volume = _clamp_float(volume, 0.0, 4.0, 1.0)
+    fx_options_dict = _sanitize_fx_options(fx_options)
     render_width = max(320, int(render_width or 1280))
     render_height = max(180, int(render_height or 720))
     render_resolution = f"{render_width}x{render_height}"
@@ -6007,6 +6334,7 @@ def burn_video(
         preview_line_count=preview_line_count,
         pitch=pitch,
         volume=volume,
+        fx_options=fx_options_dict,
         render_device=render_device,
         use_preview_audio=use_preview_audio,
         render_source=normalized_source,
@@ -6041,6 +6369,68 @@ def burn_video(
         ),
     )
     return {"status": "queued", "message": "Queued FFmpeg render job.", "job": job}
+
+
+@app.post("/api/burn-cdg")
+def burn_cdg(
+    audio_filename: str = Form(...),
+    font_name: str = Form("Arial"),
+    primary_color: str = Form("#ffe14d"),
+    secondary_color: str = Form("#9fb4ff"),
+    bg_color: str = Form("#000820"),
+    render_source: str = Form("final"),
+    lines_per_page: int = Form(4),
+):
+    """Queue a CDG+MP3 karaoke export (zipped) built from the project's lyrics."""
+    rel_audio = audio_filename
+    try:
+        audio_path = _ensure_project_layout_for_audio(
+            _resolve_output_file(audio_filename)
+        )
+        project_name = audio_path.parent.name
+        rel_audio = _relative_to_output(audio_path)
+    except Exception:
+        parts = Path(audio_filename).parts
+        project_name = parts[-2] if len(parts) >= 2 else ""
+
+    safe_project = _safe_output_name(
+        project_name, fallback_stem=Path(rel_audio).stem or "project"
+    )
+    normalized_source = str(render_source or "final").strip().lower()
+    if normalized_source not in {"preview", "final", "chorus"}:
+        normalized_source = "final"
+    try:
+        lines_pp = max(1, min(6, int(lines_per_page or 4)))
+    except Exception:
+        lines_pp = 4
+    render_token = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"{safe_project}_CDG_{normalized_source}_{render_token}.zip"
+
+    job = _enqueue_job(
+        "cdg",
+        f"CDG export {rel_audio}",
+        "cdg",
+        section="render",
+        stage="Creating CDG+MP3",
+        target_key=f"cdg:{rel_audio}:{normalized_source}:{render_token}",
+        audio_filename=rel_audio,
+        project_name=project_name,
+        font_name=font_name,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
+        bg_color=bg_color,
+        render_source=normalized_source,
+        lines_per_page=lines_pp,
+        output_filename=output_filename,
+        render_token=render_token,
+        render_source_label=normalized_source,
+        details=(
+            f"CDG+MP3 export; Source: {rel_audio}; Output: {output_filename}; "
+            f"Font: {font_name}; Lines/page: {lines_pp}; "
+            f"Audio Source: {normalized_source.capitalize()}"
+        ),
+    )
+    return {"status": "queued", "message": "Queued CDG+MP3 export job.", "job": job}
 
 
 # ===============================================================
