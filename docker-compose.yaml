@@ -29,7 +29,7 @@ services:
       - ./workspace:/workspace
       - ./fonts:/workspace/fonts:ro
     working_dir: /workspace
-    command: ["/bin/sh", "-lc", "fc-cache -fv && python3 web_server.py"]
+    command: ["/bin/sh", "-lc", "fc-cache -fv && python backend/web_server.py"]
 
   local-metube:
     image: ghcr.io/alexta69/metube:latest
