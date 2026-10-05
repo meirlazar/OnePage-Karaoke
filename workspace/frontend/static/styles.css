@@ -1,0 +1,775 @@
+      :root {
+        --bg-base: #0b0c10;
+        --bg-surface: #1f2833;
+        --bg-panel: #161f28;
+        --border: #45f3ff33;
+        --text-main: #c5c6c7;
+        --text-muted: #8fa7b2;
+        --accent: #45f3ff;
+        --accent-hover: #66fcf1;
+        --success: #7dffb3;
+        --warning: #ffcf66;
+        --danger: #ff8a80;
+        --label-color: #66fcf1;
+        --control-bg: #111821;
+        --control-fg: #ffffff;
+        --control-border: #45f3ff66;
+        --button-bg: #45f3ff;
+        --button-fg: #0b0c10;
+        --button-hover-bg: #66fcf1;
+        --button-small-fg: #c5c6c7;
+        --paper: #ffffff;
+        --ink: #111111;
+        --canvas-bg: #000000;
+        --playhead: #d71920;
+        --shadow: #000000;
+        --overlay-bg: #0b0c10;
+        --divider: #ffffff;
+        --active-glow: #45f3ff;
+        --radius: 6px;
+      }
+      /* border-box everywhere so padding never overflows resized panels */
+      * { box-sizing: border-box; }
+      body {
+        font-family: "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: var(--bg-base);
+        color: var(--text-main);
+        line-height: 1.5;
+      }
+      h1, h2, h3, h4 { color: var(--accent-hover); margin-top: 0; }
+      /* ================= DOCKED GRID LAYOUT =================
+         Panels are docked into named grid areas:
+             jobs  settings   (top row, above the preview)
+             lyrics | preview | vault   (middle row)
+         The preview spans the full width of the centre column and is the
+         dominant panel. Track sizes live in CSS custom properties so JS can
+         resize them, and each panel's area can be swapped by drag & drop. */
+      .app-layout {
+        display: grid;
+        --dock-col-left: 340px;
+        --dock-col-right: 340px;
+        --dock-row-top: auto;
+        --dock-row-main: minmax(420px, 1fr);
+        grid-template-columns:
+          minmax(220px, var(--dock-col-left))
+          minmax(0, 1fr)
+          minmax(0, 1fr)
+          minmax(220px, var(--dock-col-right));
+        grid-template-rows: var(--dock-row-top) var(--dock-row-main) auto;
+        grid-template-areas:
+          "lyrics jobs     settings vault"
+          "lyrics preview  preview  vault"
+          "fx     preview  preview  vault";
+        gap: 12px;
+        max-width: 2400px;
+        margin: 0 auto;
+        align-items: stretch;
+        position: relative;
+        overflow: visible;
+      }
+      /* The top row sits above the preview, so let jobs/settings share it and
+         allow the preview to start on row 2 spanning the centre column. */
+      .app-layout > [data-dock="jobs"]     { grid-area: jobs; }
+      .app-layout > [data-dock="settings"] { grid-area: settings; }
+      .app-layout > [data-dock="lyrics"]   { grid-area: lyrics; }
+      .app-layout > [data-dock="preview"]  { grid-area: preview; }
+      .app-layout > [data-dock="vault"]    { grid-area: vault; }
+      .app-layout > [data-dock="fx"]       { grid-area: fx; }
+
+      /* Preview takeover: every other panel slides up out of view and the
+         preview fills the layout edge to edge, top to bottom. Panels are
+         hidden rather than clipped, which is the whole point of the mode. */
+      .app-layout.preview-maximized {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: "preview";
+      }
+      .app-layout.preview-maximized > .dock-panel {
+        transform: translateY(-24px);
+        opacity: 0;
+        pointer-events: none;
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        transition: transform 0.22s ease, opacity 0.18s ease;
+      }
+      .app-layout.preview-maximized > [data-dock-area="preview"] {
+        grid-area: preview;
+        transform: none;
+        opacity: 1;
+        pointer-events: auto;
+        position: relative;
+        width: auto;
+        height: auto;
+        min-height: calc(100vh - 96px);
+      }
+      /* The takeover grip only makes sense vertically once maximized. */
+      .app-layout.preview-maximized .dock-resizer[data-dir="e"],
+      .app-layout.preview-maximized .dock-resizer[data-dir="se"] { display: none; }
+
+      .dock-panel {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        /* Must stay visible so the edge resize grips (which sit a few px
+           outside the panel box) remain hittable. Content clipping is handled
+           by the inner .card / .preview-pane, which scroll their own bodies. */
+        overflow: visible;
+      }
+      .dock-panel > .card,
+      .dock-panel > .preview-pane {
+        flex: 1 1 auto;
+        margin-bottom: 0;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        min-height: 0;
+        /* Panels are sized by the grid, not by their own resize handle. */
+        resize: none;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      /* Everything in the preview pane except the canvas keeps its natural
+         height, so no control bar is ever clipped when the pane shrinks. */
+      .dock-panel > .preview-pane > *:not(#canvas-wrapper) { flex: 0 0 auto; }
+      .dock-panel > .preview-pane .integrated-timing-rail,
+      .dock-panel > .preview-pane .media-controls,
+      .dock-panel > .preview-pane .render-actions,
+      .dock-panel > .preview-pane .vocal-waveform-rail { flex: 0 0 auto; }
+      /* Scroll the *body* of a panel so its header stays put and nothing is
+         clipped when the panel is shrunk. */
+      .dock-panel .section-body {
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-height: 0;
+        flex: 1 1 auto;
+      }
+      /* Collapsed panel: shrink to just the header instead of leaving an empty
+         box. The card no longer grows to fill the panel, and the panel no
+         longer stretches to fill its grid cell, so the layout actually closes
+         up. */
+      .dock-panel.collapsed { align-self: start; }
+      .card.collapsed {
+        flex: 0 0 auto;
+        min-height: 0;
+      }
+      .dock-panel.dock-dragging { opacity: 0.55; pointer-events: none; }
+      .dock-panel.dock-drop-target > .card,
+      .dock-panel.dock-drop-target > .preview-pane {
+        outline: 3px dashed var(--accent);
+        outline-offset: -4px;
+      }
+      /* Drag handles: panel headers advertise themselves as grabbable. */
+      .dock-panel .section-toggle { cursor: grab; }
+      .dock-panel.dock-dragging .section-toggle { cursor: grabbing; }
+
+      /* Resize grips along the panel edges. These adjust the shared grid
+         tracks so neighbouring panels reflow rather than overlap. */
+      .dock-resizer { position: absolute; z-index: 30; }
+      .dock-resizer[data-dir="e"]  { top: 0; right: -6px; width: 12px; height: 100%; cursor: col-resize; }
+      .dock-resizer[data-dir="s"]  { left: 0; bottom: -6px; height: 12px; width: 100%; cursor: row-resize; }
+      .dock-resizer[data-dir="se"] { right: -6px; bottom: -6px; width: 16px; height: 16px; cursor: nwse-resize; z-index: 31; }
+      .dock-resizing, .dock-resizing * { user-select: none !important; }
+
+      /* Stack everything in one column on narrow screens / mobile. */
+      @media (max-width: 1100px) {
+        .app-layout {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: auto;
+          grid-template-areas: "jobs" "settings" "preview" "lyrics" "vault" "fx";
+        }
+        .dock-resizer { display: none; }
+      }
+
+      /* Base panel surface. Sizing is delegated to the docked grid. */
+      .card {
+        background: var(--bg-surface);
+        padding: 16px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: 0 4px 15px color-mix(in srgb, var(--shadow) 30%, transparent);
+        box-sizing: border-box;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .card.panel-dragging {
+        cursor: grabbing;
+        opacity: 0.95;
+        box-shadow: 0 10px 40px color-mix(in srgb, var(--shadow) 50%, transparent);
+      }
+      label {
+        display: block;
+        margin: 10px 0 4px;
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--label-color);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+            /* Target your progress bar specifically */
+      #progressBar {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          margin: 0;
+          padding: 0; /* This removes the gap */
+          background: transparent;
+      }
+
+      /* Optional: Make the track look clean so it aligns perfectly */
+      #progressBar::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 4px;
+          background: var(--bg-surface); /* or whatever color you use */
+          border-radius: 2px;
+      }
+
+            /* 1. Strip default browser styling to remove the gap */
+      #seekBar {
+          -webkit-appearance: none;
+          appearance: none;
+          margin: 0;
+          padding: 0;
+          background: transparent; /* Hides default background */
+      }
+
+      /* 2. Style the "Track" (the line itself) so it spans 100% edge-to-edge */
+      #seekBar::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border); /* Uses your existing CSS variable */
+          border-radius: 3px;
+          cursor: pointer;
+      }
+
+      /* 3. Style the "Thumb" (the circle you drag) */
+      #seekBar::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 16px;
+          width: 16px;
+          background: var(--accent); /* Uses your existing CSS variable */
+          border-radius: 50%;
+          cursor: pointer;
+          margin-top: -5px; /* Pulls the thumb up so it centers on the line */
+      }
+
+      /* Fix for Firefox */
+      #seekBar::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+      }
+      #seekBar::-moz-range-thumb {
+          height: 16px;
+          width: 16px;
+          background: var(--accent);
+          border-radius: 50%;
+          border: none;
+      }
+
+      /* Volume slider: strip the generic input padding so the thumb reaches the
+         far-left edge when the value is 0.00 (edge-to-edge track). */
+      #volume {
+          -webkit-appearance: none;
+          appearance: none;
+          margin: 0;
+          padding: 0;
+          height: 16px;
+          background: transparent;
+          border: none;
+      }
+      #volume::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+          cursor: pointer;
+      }
+      #volume::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 14px;
+          width: 14px;
+          background: var(--accent);
+          border-radius: 50%;
+          cursor: pointer;
+          margin-top: -4px;
+      }
+      #volume::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: var(--border);
+          border-radius: 3px;
+      }
+      #volume::-moz-range-thumb {
+          height: 14px;
+          width: 14px;
+          background: var(--accent);
+          border-radius: 50%;
+          border: none;
+      }
+
+      /* Larger Play button with a continuous shine sweep. */
+      #playBtn {
+          position: relative;
+          overflow: hidden;
+          min-width: 96px;
+          padding: 12px 24px;
+          font-size: 16px;
+          font-weight: 800;
+          letter-spacing: 0.03em;
+          border-radius: 8px;
+          box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+      }
+      #playBtn::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          left: -60%;
+          width: 40%;
+          height: 100%;
+          background: linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.65) 50%, transparent 100%);
+          transform: skewX(-20deg);
+          animation: playShine 2.6s ease-in-out infinite;
+          pointer-events: none;
+      }
+      @keyframes playShine {
+          0% { left: -60%; }
+          55% { left: 130%; }
+          100% { left: 130%; }
+      }
+
+      /* Timing Mode indicator: red when off, flashing glowing green when on. */
+      #manualTimingBtn {
+          font-weight: 700;
+          transition: background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+      }
+      #manualTimingBtn.timing-off {
+          background: var(--danger);
+          color: #fff;
+          border-color: var(--danger);
+          box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 55%, transparent);
+      }
+      #manualTimingBtn.timing-on {
+          background: #16c60c;
+          color: #04210a;
+          border-color: #37ff2b;
+          animation: timingModeFlash 1s ease-in-out infinite;
+      }
+      @keyframes timingModeFlash {
+          0%, 100% {
+              background: #12a908;
+              box-shadow: 0 0 6px rgba(34, 220, 20, 0.6), 0 0 12px rgba(34, 220, 20, 0.35);
+          }
+          50% {
+              background: #3bff2e;
+              box-shadow: 0 0 16px rgba(60, 255, 46, 1), 0 0 30px rgba(60, 255, 46, 0.75);
+          }
+      }
+        .vocal-waveform-rail {
+          position: relative;
+          height: 54px;
+          margin: 6px 0 0;
+          padding: 5px 8px;
+          background: var(--control-bg);
+          border: 1px solid var(--control-border);
+          border-radius: 4px 4px 0 0;
+          box-sizing: border-box;
+          cursor: grab;
+          touch-action: none;
+          user-select: none;
+        }
+        #vocalWaveform {
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+      input[type="text"], input[type="number"], input[type="range"], select, textarea {
+        width: 100%;
+        padding: 8px 10px;
+        background: var(--control-bg);
+        border: 1px solid var(--control-border);
+        border-radius: 4px;
+        color: var(--control-fg);
+        box-sizing: border-box;
+        font-size: 13px;
+      }
+      input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--control-fg) 65%, transparent); }
+      select option { background: var(--control-bg); color: var(--control-fg); }
+      input[type="text"]:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      textarea {
+        height: 180px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        resize: vertical;
+      }
+      /* Chorus marking: a mirrored overlay sits behind a transparent-text
+         textarea so marked words can render bold (a textarea cannot style
+         individual words itself). Every font/box/wrapping property below MUST
+         stay in sync with the textarea rules or the colored lines drift apart.
+         Highlight styles therefore must NOT change glyph metrics (no real bold,
+         italic, or font-size changes) — those alter wrapping and misalign the
+         overlay from the text the user actually selected. */
+      .lyrics-editor-wrap { position: relative; }
+      .lyrics-editor-wrap textarea {
+        position: relative;
+        background: transparent;
+        color: transparent;
+        caret-color: var(--control-fg);
+        z-index: 1;
+        line-height: 18px;
+        letter-spacing: normal;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: normal;
+        tab-size: 4;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+      }
+      .lyrics-editor-wrap textarea::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+      .lyrics-overlay {
+        position: absolute;
+        inset: 0;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: var(--control-bg);
+        color: var(--control-fg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 18px;
+        letter-spacing: normal;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: normal;
+        tab-size: 4;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+        box-sizing: border-box;
+        pointer-events: none;
+        z-index: 0;
+      }
+      /* Emphasis is faux-bold (text-shadow) so advance widths — and therefore
+         wrapping — stay identical to the plain textarea. */
+      .lyrics-overlay .chorus-on {
+        color: var(--accent);
+        text-shadow: 0.5px 0 0 currentColor;
+      }
+      .lyrics-overlay .gender-m { color: #4169e1; }
+      .lyrics-overlay .gender-f { color: #ff1493; }
+      .lyrics-overlay .gender-b { color: #32cd32 ; }
+      .lyrics-overlay .chorus-on.gender-m { color: #1e90ff; }
+      .lyrics-overlay .chorus-on.gender-f { color: #ff1493; }
+      .lyrics-overlay .chorus-on.gender-b { color: #32cd32; }
+      .gender-btn-male { border-color: #4169e1 !important; }
+      .gender-btn-female { border-color: #ff00ff !important; }
+      .gender-btn-both { border-color: #32cd32 !important; }
+      .gender-btn-none { border-color: var(--text-muted) !important; }
+      /* Single burn-bright toggle buttons (chorus + duet voice). */
+      .chorus-toggle-btn {
+        background: #ff8c00 !important; border-color: #ff8c00 !important;
+        color: #1a0d00 !important; font-weight: 800; letter-spacing: .02em;
+        box-shadow: 0 0 16px rgba(255,140,0,.55);
+        transition: filter .15s ease, box-shadow .15s ease, transform .1s ease;
+      }
+      .chorus-toggle-btn:hover { filter: brightness(1.12); box-shadow: 0 0 22px rgba(255,140,0,.75); }
+      .chorus-toggle-btn:active { transform: scale(.97); }
+      .gender-toggle-btn {
+        font-weight: 800; letter-spacing: .02em;
+        transition: background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .1s ease;
+      }
+      .gender-toggle-btn:active { transform: scale(.97); }
+      .gender-toggle-male   { background:#4169e1 !important; border-color:#4169e1 !important; color:#fff !important;    box-shadow:0 0 18px rgba(65,105,225,.7); }
+      .gender-toggle-female { background:#ff1493 !important; border-color:#ff1493 !important; color:#fff !important;    box-shadow:0 0 18px rgba(255,20,147,.75); }
+      .gender-toggle-both   { background:#32cd32 !important; border-color:#32cd32 !important; color:#06210b !important; box-shadow:0 0 18px rgba(50,205,50,.65); }
+      .gender-toggle-none   { background:#c0c0c0 !important; border-color:#c0c0c0 !important; color:#1a1a1a !important; box-shadow:0 0 10px rgba(192,192,192,.5); }
+      .color-gender-toggle.color-gender-m { color: #4169e1; }
+      .color-gender-toggle.color-gender-f { color: #ff1493; }
+      .color-gender-toggle.color-gender-b { color: #32cd32; }
+      .section-toggle {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: transparent;
+        border: none;
+        color: inherit;
+        padding: 0;
+        margin: 0 0 12px;
+        cursor: pointer;
+        text-align: center;
+        position: relative;
+      }
+      .section-toggle > span:first-child { width: 100%; text-align: center; }
+      .section-toggle-main { font-size: 19px; font-weight: 700; color: var(--accent-hover); display: block; text-align: center; }
+      .section-toggle-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: block; }
+      .section-toggle-arrow { font-size: 18px; color: var(--accent); transition: transform 0.2s ease; position: absolute; right: 0; top: 2px; }
+      .section-toggle.collapsed .section-toggle-arrow { transform: rotate(-90deg); }
+      .section-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      .section-body.hidden { display: none; }
+      .btn {
+        background: var(--button-bg);
+        color: var(--button-fg);
+        border: none;
+        padding: 8px 12px;
+        font-weight: 700;
+        font-size: 13px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .btn:hover { background: var(--button-hover-bg); box-shadow: 0 0 8px color-mix(in srgb, var(--accent-hover) 40%, transparent); }
+      .btn-wide { width: 100%; margin-top: 10px; }
+      .btn-small { padding: 6px 10px; font-size: 11px; background: transparent; border: 1px solid var(--control-border); color: var(--button-small-fg); }
+      .btn-small:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: var(--accent); color: var(--control-fg); }
+      .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .pipeline-section { border: 1px solid color-mix(in srgb, var(--divider) 5%, transparent); border-radius: 6px; padding: 12px; margin-top: 12px; background: color-mix(in srgb, var(--shadow) 20%, transparent); }
+      .preview-pane {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        background: var(--bg-panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        box-shadow: 0 10px 30px color-mix(in srgb, var(--shadow) 50%, transparent);
+        resize: both;
+        max-width: 100%;
+        box-sizing: border-box;
+        min-width: min(320px, 100%);
+        min-height: 92vh;
+        /* Keep the video frame sane at any browser zoom: never taller than the
+           viewport, and never wider than a 16:9 frame of that height. Without
+           this the pane balloons when the user zooms out. */
+        max-height: auto;
+        flex: 1;
+      }
+      #videoCanvas {
+        display: block;
+        /* Fill the pane in both axes while preserving the 16:9 frame via
+           object-fit, so resizing the pane vertically actually grows the
+           visible canvas instead of being ignored by aspect-ratio. */
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        flex: 1;
+        object-fit: fill;
+        background: #000;
+      }
+      .preview-header-overlay {
+        position: absolute;
+        top: 0; left: 0; width: 100%; padding: 12px;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--overlay-bg) 95%, transparent) 0%, color-mix(in srgb, var(--overlay-bg) 40%, transparent) 70%, transparent 100%);
+        display: flex; flex-wrap: wrap; gap: 10px; z-index: 10; opacity: 0.12; transition: opacity 0.5s ease;
+        align-items: center; justify-content: center; border-radius: var(--radius) var(--radius) 0 0;
+      }
+      /* Auto-fade: JS adds .controls-visible on interaction, then removes it after a timeout. */
+      .preview-header-overlay.controls-visible { opacity: 1; }
+      .section-toggle { cursor: grab; user-select: none; }
+      .section-toggle:active { cursor: grabbing; }
+      .section-toggle-arrow { display: inline-block; transition: transform 0.3s ease; }
+      .panel-dragging { cursor: grabbing !important; user-select: none; z-index: 50; opacity: 0.92; box-shadow: 0 18px 40px color-mix(in srgb, var(--shadow) 55%, transparent); pointer-events: none; }
+      .panel-drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; }
+      body.panel-drag-active, body.panel-drag-active * { cursor: grabbing !important; }
+      .compact-ctrl { display: flex; align-items: center; gap: 6px; background: color-mix(in srgb, var(--bg-surface) 80%, transparent); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); font-size: 11px; }
+      .compact-ctrl input[type="color"] { width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; background: transparent; }
+      .compact-ctrl select, .compact-ctrl input[type="range"] { background: transparent; border: none; padding: 0; width: 80px; color: var(--control-fg); }
+      .step-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 1px solid var(--control-border); border-radius: 5px; background: color-mix(in srgb, var(--bg-surface) 55%, transparent); color: var(--control-fg); cursor: pointer; font-size: 9px; line-height: 1; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease; }
+      .step-btn:hover { background: var(--accent); color: var(--button-fg); border-color: var(--accent); }
+      .step-btn:active { transform: scale(0.9); }
+      .compact-ctrl select:focus { outline: none; }
+      .compact-ctrl select option { background-color: var(--control-bg); color: var(--control-fg); }
+      /* The canvas is the only elastic part of the preview pane: it shrinks so
+         the timing rail, waveform, transport controls and render buttons are
+         ALWAYS visible, instead of being pushed out of the pane. */
+      #canvas-wrapper {
+        width: 100%;
+        background: var(--canvas-bg);
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 180px;
+        overflow: hidden;
+      }
+      canvas { width: 100%; height: 100%; display: block; object-fit: fill; }
+      .integrated-timing-rail { background: color-mix(in srgb, var(--overlay-bg) 90%, transparent); border-top: 1px solid var(--border); padding: 8px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+      .media-controls { background: var(--bg-surface); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .media-controls input[type="range"] { flex: 1; min-width: 100px; }
+      .media-inline-control { display: flex; align-items: center; gap: 8px; }
+      .media-inline-control label { margin: 0; }
+      .media-inline-control label { font-size: 15px; color: var(--label-color); }
+      .media-controls select {
+        background: var(--control-bg) !important;
+        color: var(--control-fg);
+        border: 1px solid var(--control-border);
+      }
+      .media-controls select option {
+        background: var(--control-bg);
+        color: var(--control-fg);
+      }
+      .state-badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+      .state-waiting { background: color-mix(in srgb, var(--warning) 10%, transparent); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent); }
+      .state-ready, .state-completed { background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 20%, transparent); }
+      .state-running { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); }
+      .state-failed { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent); }
+      .job-list { max-height: none; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+      .job-item { border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--bg-base); }
+      .job-top { display: flex; justify-content: space-between; align-items: center; }
+      .job-label { font-size: 13px; font-weight: 600; color: var(--paper); }
+      .job-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+      .job-bar { width: 100%; height: 4px; background: var(--bg-surface); border-radius: 2px; overflow: hidden; margin-top: 8px; }
+      .job-bar-fill { height: 100%; background: var(--accent); }
+      .file-row { display: block; padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--divider) 5%, transparent); font-size: 12px; }
+      .file-row-active {
+        border: 1px solid var(--accent-hover);
+        border-radius: 6px;
+        background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--success) 8%, transparent));
+        box-shadow: 0 0 12px color-mix(in srgb, var(--active-glow) 45%, transparent);
+        animation: activeVaultPulse 1.1s ease-in-out infinite alternate;
+      }
+      .file-row-main { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .file-row-actions { display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+      .vault-btn { padding: 3px 7px; font-size: 10px; line-height: 1.2; }
+      .file-row-active .file-name { color: var(--paper); font-weight: 700; }
+      @keyframes activeVaultPulse {
+        from { box-shadow: 0 0 8px color-mix(in srgb, var(--active-glow) 25%, transparent), 0 0 0 color-mix(in srgb, var(--accent-hover) 10%, transparent); }
+        to { box-shadow: 0 0 18px color-mix(in srgb, var(--accent-hover) 75%, transparent), 0 0 10px color-mix(in srgb, var(--success) 35%, transparent); }
+      }
+      .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .btn[disabled] { opacity: 0.9; cursor: default; pointer-events: none; }
+      .manual-word { color: var(--success); font-weight: 700; font-size: 14px; }
+      .snapshot-bottom-wrap {
+        max-width: 1900px;
+        margin: 12px auto 0;
+        padding: 0 4px;
+      }
+      .btn-snapshot-bottom {
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 16px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 800;
+      }
+      .theme-meta {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+        min-height: 18px;
+      }
+      .debug-output {
+        margin-top: 10px;
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--shadow) 28%, transparent);
+        padding: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+      }
+      .debug-summary {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+      }
+      .debug-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      /* Legacy responsive rules kept only for the single-column fallback; the
+         docked grid handles its own breakpoint at 1100px above. */
+      @media (max-width: 1200px) {
+        .preview-pane { position: static; min-width: 0; }
+        .card { min-width: 0; }
+      }
+
+      /* Primary render actions pinned to the bottom of the preview pane. */
+      .render-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px 4px 4px;
+        border-top: 1px solid var(--border);
+        margin-top: 10px;
+        flex: 0 0 auto;
+      }
+      .render-action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        padding: 14px 10px;
+        min-height: 58px;
+        line-height: 1.25;
+        text-align: center;
+        white-space: normal;
+      }
+      .render-action-title { font-size: 14px; font-weight: 800; letter-spacing: 0.01em; }
+      .render-action-sub { font-size: 10px; opacity: 0.75; font-weight: 600; }
+      .render-action-primary { background: var(--success); }
+      @media (max-width: 900px) {
+        .render-actions { grid-template-columns: 1fr; }
+      }
+      /* Circular revision nav arrows: clean, glassy, with a directional nudge on hover. */
+      .arrow{
+        display:inline-flex; align-items:center; justify-content:center;
+        width:100%; height:100%; min-height:40px; padding:0;
+        font-size:14px; line-height:1; font-weight:700;
+        color:var(--control-fg);
+        background:color-mix(in srgb, var(--bg-surface) 80%, transparent);
+        border:1px solid var(--control-border); border-radius:50%;
+        cursor:pointer; -webkit-tap-highlight-color:transparent;
+        transition:transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease, color .18s ease;
+      }
+      .arrow:hover{
+        color:var(--button-fg);
+        background:var(--accent); border-color:var(--accent);
+        box-shadow:0 4px 16px color-mix(in srgb, var(--accent) 45%, transparent);
+      }
+      .arrow.aniArrow01:hover{ transform:translateX(-3px) scale(1.08); }
+      .arrow.aniArrow02:hover{ transform:translateX(3px) scale(1.08); }
+      .arrow:active{ transform:scale(.92); }
+      .arrow:disabled, .arrow[disabled]{ opacity:.4; cursor:not-allowed; transform:none; box-shadow:none; }
+      /* ---- Touch timing controls (tap Start/End on a phone/tablet) ---- */
+      .touch-timing-controls { display: none; gap: 10px; padding: 10px 16px; background: var(--bg-surface); border-top: 1px solid var(--border); }
+      .touch-timing-controls .btn { flex: 1; padding: 16px 12px; font-size: 16px; font-weight: 800; letter-spacing: 0.04em; border-radius: 8px; touch-action: manipulation; user-select: none; }
+      .touch-timing-btn-start { background: var(--success); color: var(--button-fg); }
+      .touch-timing-btn-end { background: var(--accent); color: var(--button-fg); }
+      .touch-timing-controls .btn:active { transform: scale(0.97); filter: brightness(1.15); }
+
+      /* Mobile mode: triggered automatically for small/touch screens or via the toggle. */
+      body.mobile-mode .app-layout { grid-template-columns: 1fr; }
+      body.mobile-mode .top-panels { grid-template-columns: 1fr; }
+      body.mobile-mode .preview-pane { position: static; min-width: 0; min-height: 0; resize: none; }
+      body.mobile-mode .card { min-width: 0; }
+      body.mobile-mode .touch-timing-controls { display: flex; }
+      body.mobile-mode .preview-header-overlay { padding: 8px; gap: 6px; }
+      body.mobile-mode .compact-ctrl { font-size: 12px; padding: 6px 8px; }
+      body.mobile-mode .compact-ctrl input[type="color"] { width: 26px; height: 26px; }
+      body.mobile-mode .step-btn { width: 30px; height: 30px; line-height: 26px; font-size: 14px; }
+      body.mobile-mode .media-controls { gap: 8px; padding: 10px; }
+      body.mobile-mode .media-controls .btn { padding: 10px 14px; font-size: 15px; }
+      body.mobile-mode .integrated-timing-rail { flex-wrap: wrap; }
+      body.mobile-mode .integrated-timing-rail .btn-small { padding: 10px 12px; font-size: 13px; }
+      #mobileModeToggle { position: fixed; right: 12px; bottom: 12px; z-index: 200; opacity: 0.85; }

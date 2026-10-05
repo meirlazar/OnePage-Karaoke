@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OnePage Karaoke</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+
+</head>
+<body>
+    <h2 style="text-align: center; margin-bottom: 24px; letter-spacing: -0.5px">OnePage-Karaoke Creator</h2>
+    <button type="button" id="mobileModeToggle" class="btn btn-small" onclick="toggleMobileMode()" title="Toggle mobile-friendly layout">📱 Mobile</button>
+
+    <!-- ===============================================================
+         SECTION: Main App Layout Container
+         Purpose: Three-column layout - sidebar (controls), main preview,
+                  and right column (lyrics editor, job status, media vault)
+         =============================================================== -->
+
+    <div class="app-layout" id="appLayout">
+      <!-- DOCK: Active Jobs -->
+      <div class="dock-panel" data-dock="jobs">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionTopJobsBody', this)">
+            <span><span class="section-toggle-main">Active Jobs</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionTopJobsBody" class="section-body">
+
+            <!-- Add this utility container -->
+        <div style="display: flex; justify-content: flex-end; padding-bottom: 8px;">
+          <button class="btn btn-small" onclick="clearInactiveJobs()" title="Clear finished, failed, and cancelled jobs">Clear Inactive</button>
+        </div>
+
+            <div id="job-list" class="job-list">No jobs yet.</div>
+          </div>
+        </div>
+
+        <!-- SETTINGS: hardware/model selection, theme, and diagnostics -->
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Settings -->
+      <div class="dock-panel" data-dock="settings">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionThemeDebugBody', this)">
+            <span>
+              <span class="section-toggle-main">Settings</span>
+              <span class="section-toggle-sub">Transcription models, hardware allocation, UI theme, and diagnostics.</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionThemeDebugBody" class="section-body">
+            <div class="row2">
+              <div>
+                <label>Whisper Model</label>
+                <select id="whisperModel">
+                  <option value="small">small</option>
+                  <option value="medium" selected>medium</option>
+                  <option value="large-v2">large-v2</option>
+                  <option value="large-v3">large-v3</option>
+                </select>
+              </div>
+              <div>
+                <label>Language</label>
+                <select id="transcriptionLanguage">
+                  <option value="auto" selected>Auto</option>
+                  <option value="en">English</option>
+                  <option value="ru">Russian</option>
+                  <option value="he">Hebrew</option>
+                  <option value="es">Spanish</option>
+                </select>
+              </div>
+            </div>
+            <div class="row2" style="margin-top: 8px">
+              <div>
+                <label>Stem Device</label>
+                <select id="stemDevice">
+                  <option value="auto" selected>Auto</option>
+                  <option value="cuda">GPU / CUDA</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+              <div>
+                <label>Whisper Device</label>
+                <select id="whisperDevice">
+                  <option value="auto" selected>Auto</option>
+                  <option value="cuda">GPU / CUDA</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+            </div>
+            <div class="row2" style="margin-top: 8px">
+              <div>
+                <label>Render Hardware</label>
+                <select id="renderDevice">
+                  <option value="auto">Auto</option>
+                  <option value="cuda" selected>GPU / NVENC</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+              <div>
+                <label>Theme</label>
+                <select id="themeSelect" onchange="applySelectedTheme()"></select>
+              </div>
+            </div>
+            <div id="themeMeta" class="theme-meta">Loading theme catalog...</div>
+            <div class="debug-actions">
+              <button class="btn btn-small" onclick="applySelectedTheme()">Apply Theme</button>
+              <button class="btn btn-small" onclick="runDebugger()">Run Debugger</button>
+              <button class="btn btn-small" onclick="copyDebugReport()">Copy Report</button>
+              <button class="btn btn-small" onclick="resetUiLayout()" title="Restore all panels to their default size, position and spacing">↺ Reset UI</button>
+            </div>
+            <button class="btn btn-small btn-wide" onclick="saveProjectSnapshot()" style="margin-top: 10px">Save Project Snapshot</button>
+            <div id="debugSummary" class="debug-summary">Debugger idle.</div>
+            <div id="debugOutput" class="debug-output">No diagnostics captured yet.</div>
+          </div>
+        </div>
+
+        <!-- MEDIA VAULT: source ingestion (upload / web fetch) + saved projects -->
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Manage Lyrics -->
+      <div class="dock-panel" data-dock="lyrics">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionStatusBody', this)">
+            <span><span class="section-toggle-main">Manage Lyrics</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionStatusBody" class="section-body">
+            <div class="pipeline-section" style="margin-top:0; margin-bottom:12px">
+              <label>Lyrics Service</label>
+              <select id="lyricsProvider" onchange="onLyricsProviderChange()">
+                <option value="auto" selected>Auto (best result)</option>
+                <option value="lrclib">LRCLib</option>
+                <option value="syncedlyrics">syncedlyrics</option>
+                <option value="genius">Genius</option>
+                <option value="suno">Suno (paste song link)</option>
+              </select>
+              <input type="text" id="sunoUrl" placeholder="https://suno.com/song/… or song ID"
+                     style="display:none; width:100%; margin-top:6px; box-sizing:border-box;"
+                     title="Paste the Suno song link or ID to pull its exact lyrics." />
+              <button class="btn btn-small btn-wide" onclick="autoGrabLyrics()">Pull Lyrics</button>
+              <input type="file" id="lrcUploadInput" accept=".lrc,.txt" style="display:none" onchange="uploadLrcFile(this)" />
+              <button class="btn btn-small btn-wide" style="margin-top:6px" onclick="document.getElementById('lrcUploadInput').click()" title="Browse to a .lrc file on your computer and load it as the lyrics for the mounted media.">Upload LRC</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+              <span id="activeLyricsLabel" style="font-size: 11px; color: var(--text-muted)">No media mounted</span>
+              <span id="lyricsReadyBadge" class="state-badge state-waiting">Not Ready</span>
+            </div>
+            <div class="lyrics-editor-wrap">
+              <div id="lyricsChorusOverlay" class="lyrics-overlay" aria-hidden="true"></div>
+              <textarea id="lyricsEditor" placeholder="[00:12.34] Example lyric line..." oninput="onLyricsEditorInput()" onscroll="syncChorusOverlayScroll()"></textarea>
+            </div>
+            <div style="display:flex; gap:6px; margin-top: 8px;">
+              <button class="btn btn-small chorus-toggle-btn" style="margin-top:0; flex:1" onclick="markSelectionChorus(true)" title="Highlight words in the editor, then click to add them to the chorus vocals. Marked words appear bold.">✦ +Chorus</button>
+              <button class="btn btn-small chorus-toggle-btn" style="margin-top:0; flex:1" onclick="markSelectionChorus(false)" title="Highlight marked words, then click to remove them from the chorus vocals.">✕ −Chorus</button>
+            </div>
+            <div id="chorusMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No words marked for chorus vocals (auto-detect will be used).</div>
+            <div style="display:flex; gap:6px; margin-top:8px;">
+              <button class="btn btn-small gender-toggle-btn gender-toggle-male" style="margin-top:0; flex:1" onclick="markSelectionGender('m')" title="Highlight lines in the editor, then click to assign the Male voice.">♂ Male</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-female" style="margin-top:0; flex:1" onclick="markSelectionGender('f')" title="Highlight lines in the editor, then click to assign the Female voice.">♀ Female</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-both" style="margin-top:0; flex:1" onclick="markSelectionGender('b')" title="Highlight lines in the editor, then click to assign Both voices.">⚥ Both</button>
+              <button class="btn btn-small gender-toggle-btn gender-toggle-none" style="margin-top:0; flex:1" onclick="markSelectionGender(null)" title="Highlight lines in the editor, then click to remove the duet voice.">✕ None</button>
+            </div>
+            <div id="genderMarkInfo" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); text-align:center;">No lines assigned a duet voice.</div>
+            <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted); text-align:center;">Edits save automatically. Timing-mode adjustments update these lyrics live.</div>
+            <div class="row2" style="margin-top: 10px;">
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('minor')" title="Make small timing adjustments without changing lyric words">Minor Auto-Correct</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('major')" title="Rebuild timing from the AI alignment">Major Auto-Correct</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onmousedown="event.preventDefault()" onclick="shiftAllLyricsTiming(-0.01)" title="Shift timing 0.01s earlier. With no lyrics highlighted this nudges every timestamp; highlight word(s)/line(s) to nudge only those. Creates a new revision each press.">I'm slow (-00:00.01)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onmousedown="event.preventDefault()" onclick="shiftAllLyricsTiming(+0.01)" title="Shift timing 0.01s later. With no lyrics highlighted this nudges every timestamp; highlight word(s)/line(s) to nudge only those. Creates a new revision each press.">I'm fast (+00:00.01)</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="clearAllLyricsTiming()" title="Create a new revision with the same lyric words and no timing">Clear All Timing</button>
+              <button class="btn btn-small btn-wide" style="margin-top:0" onclick="autoCorrectWordTiming('safe-word')" title="Rebuild word timing while preventing overlapping or stalled word highlights">Safe Word-Level Sync</button>
+            </div>
+            <div class="row2" style="margin-top: 10px;">
+              <select id="customTimingMaxOffset" title="Maximum seconds each line is allowed to shift">
+                <option value="1">Max offset: 1s</option>
+                <option value="2">Max offset: 2s</option>
+                <option value="3">Max offset: 3s</option>
+                <option value="5" selected>Max offset: 5s</option>
+                <option value="10">Max offset: 10s</option>
+                <option value="15">Max offset: 15s</option>
+                <option value="20">Max offset: 20s</option>
+              </select>
+              <button class="btn btn-small btn-wide" onclick="autoCorrectWordTiming('custom')" title="Adjust timing from the AI alignment, capped to the selected max offset">Custom Auto-Correct</button>
+            </div>
+            <div style="display:grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap:8px; margin-top:10px; align-items:center;">
+              <button class="arrow aniArrow01" onclick="stepLyricsRevision(-1)" title="Previous lyrics version">❮</button>
+              <div style="min-width:0; text-align:center;">
+                <div style="font-size:10px; color:var(--text-muted);">Lyrics Revisions (auto-loaded)</div>
+                <div id="lyricsRevisionMeta" style="min-height:40px; margin-top:4px; font-size:9px; color:var(--text-muted); overflow:hidden; line-height:1.3;" aria-live="polite">Revision -</div>
+              </div>
+              <button class="arrow aniArrow02" onclick="stepLyricsRevision(1)" title="Next lyrics version">❯</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Preview -->
+      <div class="dock-panel" data-dock="preview">
+        <div class="preview-pane card" id="previewPane">
+          <div class="section-toggle" style="cursor: grab; user-select: none; padding: 12px; border-bottom: 1px solid var(--border); margin: -16px -16px 12px -16px; background: var(--bg-muted); border-radius: var(--radius) var(--radius) 0 0; display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; font-size: 14px; flex: 1; color: var(--text-main)">📺 Preview & Adjustments</span>
+            <button id="previewMaxBtn" class="step-btn" type="button" title="Expand preview to fill the page" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation(); togglePreviewMaximized()" style="font-size: 13px; line-height: 1; padding: 3px 7px;">⛶</button>
+            <span class="section-toggle-arrow" style="display: inline-block; transition: transform 0.3s ease; color: var(--text-muted)">▶</span>
+          </div>
+
+          <div id="canvas-wrapper">
+            <div class="preview-header-overlay">
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Font</span>
+                <select id="fontSelect" onchange="updatePreview()"></select>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Size</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', 1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('fontSize', -1, 20, 500, 'fontSizeNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="fontSize" value="130" />
+                <input type="number" id="fontSizeNum" min="20" max="500" value="130" oninput="document.getElementById('fontSize').value=this.value; updatePreview()" style="width: 45px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl" title="Line Spacing">
+                <span style="color: var(--text-muted)">Gap</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', 1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('lineSpacing', -1, 0, 100, 'lineGapNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="lineSpacing" value="30" />
+                <input type="number" id="lineGapNum" min="0" max="100" value="30" oninput="document.getElementById('lineSpacing').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl" title="Word Padding">
+                <span style="color: var(--text-muted)">Pad</span>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', 1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" onpointerdown="startControlStep('wordPadding', -1, 0, 50, 'wordPadNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="wordPadding" value="0" />
+                <input type="number" id="wordPadNum" min="0" max="50" value="0" oninput="document.getElementById('wordPadding').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl">
+                <button class="step-btn color-gender-toggle" id="colorGenderToggle" type="button" title="Editing Male / default colors — click to switch voice" onclick="cycleColorGender()" style="min-width: 26px; font-size: 14px;">♂</button>
+                <input type="color" id="primaryColor" value="#366fe0" title="Primary" oninput="onGenderColorInput()" />
+                <input type="color" id="secondaryColor" value="#45f3ff" title="Secondary" oninput="onGenderColorInput()" />
+                <input type="color" id="outlineColor" value="#0b0c10" title="Outline" oninput="onGenderColorInput()" />
+                <button class="step-btn" type="button" title="Thicker outline" onpointerdown="startControlStep('outlineWidth', 1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▲</button>
+                <button class="step-btn" type="button" title="Thinner outline (0 = none)" onpointerdown="startControlStep('outlineWidth', -1, 0, 40, 'outlineWidthNum', event)" onpointerup="stopControlStep(event)" onpointerleave="stopControlStep(event)">▼</button>
+                <input type="hidden" id="outlineWidth" value="2" />
+                <input type="number" id="outlineWidthNum" min="0" max="40" value="12" title="Outline thickness (0 = none)" oninput="document.getElementById('outlineWidth').value=this.value; updatePreview()" style="width: 40px; padding: 2px; font-size: 11px;" />
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">BG</span>
+                <input type="color" id="bgColor" value="#161f28" title="Background Color" oninput="updatePreview()" />
+                <select id="bgType" onchange="updatePreview()" style="width: 70px">
+                  <option value="color">Solid</option><option value="gradient">Gradient</option><option value="spiral">Spiral FX</option><option value="image">Image</option>
+                </select>
+                <input type="file" id="bgUpload" accept="image/*" style="display: none" onchange="handleBgUpload(event)" />
+                <button type="button" class="btn btn-small" onclick="document.getElementById('bgUpload').click()" style="padding: 2px 6px">📁</button>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">FX</span>
+                <select id="transitionStyle" onchange="updatePreview(); updateFxPanel();" style="width: 65px">
+                  <option value="none">None</option><option value="fade">Fade</option><option value="pop">Pop</option><option value="slide">Slide</option><option value="zoom">Zoom</option><option value="drop">Drop</option><option value="blur">Blur</option><option value="bouncing-ball">Bouncing Ball</option><option value="rotate-360">360 Rotate</option><option value="glimmer">Glimmer</option><option value="shake">Shake</option><option value="flip">Flip</option><option value="pulse">Pulse</option><option value="sway">Sway</option><option value="skew">Skew</option><option value="stamp">Stamp</option><option value="focus">Focus</option>
+                </select>
+              </div>
+
+              <div class="compact-ctrl">
+                <span style="color: var(--text-muted)">Mode</span>
+                <select id="textEffect" onchange="updatePreview()" style="width: 70px">
+                  <option value="none">Flat</option><option value="shadow">Shadow</option><option value="hard-shadow">Hard Drop</option><option value="glow">Glow</option><option value="neon">Neon</option>
+                </select>
+                <select id="revealMode" onchange="updatePreview()" style="width: 75px" title="Reveal Mode">
+                  <option value="continuous" selected>Scroll</option><option value="block">Block</option><option value="eager">Eager</option>
+                </select>
+                <select id="previewLineCount" onchange="updatePreview()" style="width: 50px">
+                  <option value="2">2 Lns</option><option value="3" selected>3 Lns</option><option value="4">4 Lns</option>
+                </select>
+              </div>
+            </div>
+            <canvas id="videoCanvas" width="1920" height="1080"></canvas>
+          </div>
+
+          <div id="manualTimingPanel" class="integrated-timing-rail">
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 200px">
+              <button class="btn btn-small timing-off" id="manualTimingBtn" onclick="toggleManualTiming()">Timing Mode is OFF</button>
+              <div style="font-size: 11px; color: var(--text-muted)">Press <b>S</b> (Start) / <b>F</b> (End)</div>
+            </div>
+            <div style="flex: 1; text-align: center">
+              <span id="manualCurrentWord" class="manual-word" style="font-size: 16px">-</span>
+              <span id="manualProgressText" style="font-size: 11px; margin-left: 8px; color: var(--text-muted)">0 / 0</span>
+            </div>
+            <div style="display: flex; gap: 6px">
+              <button class="btn btn-small" onclick="manualTimingStepBackward()">Prev</button>
+              <button class="btn btn-small" onclick="manualTimingStepForward()">Next</button>
+              <button class="btn btn-small" onclick="resetPreviewAndTiming()">Reset</button>
+            </div>
+          </div>
+
+          <div class="touch-timing-controls" id="touchTimingControls">
+            <button class="btn touch-timing-btn-start" type="button"
+              onpointerdown="onTouchTimingPress(event, 'start')">▶ START word (S)</button>
+            <button class="btn touch-timing-btn-end" type="button"
+              onpointerdown="onTouchTimingPress(event, 'end')">⏹ END word (F)</button>
+          </div>
+
+          <div class="vocal-waveform-rail" id="vocalWaveformRail" title="Scroll up/down to make vocal dynamics taller/smaller. Drag left/right to pan. Click to seek.">
+            <canvas id="vocalWaveform" aria-label="Vocal dynamics waveform"></canvas>
+          </div>
+
+          <div class="media-controls">
+            <button class="btn btn-small" type="button" onclick="skipPreview(-5)" title="Back 5 seconds">«</button>
+            <button class="btn" id="playBtn" onclick="togglePlayback()">Play</button>
+            <button class="btn btn-small" type="button" onclick="skipPreview(5)" title="Forward 5 seconds">»</button>
+            <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" oninput="onSeekBarInput()" onchange="onSeekBarCommit()" />
+            <div id="timeDisplay" style="font-family: monospace; font-size: 11px; color: var(--accent); min-width: 75px; text-align: center">00:00 / 00:00</div>
+
+            <div class="media-inline-control" style="border-left: 1px solid var(--border); padding-left: 12px">
+              <label>Vol <span id="volumeValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+              <input type="range" id="volume" min="0" max="1" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+            </div>
+            <div class="media-inline-control">
+              <label>Spd</label>
+              <select id="playbackRate" onchange="onPlaybackRateChange()" style="padding: 4px; font-size: 11px; width: 55px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="0.5">0.5x</option>
+                <option value="1" selected>1.0x</option>
+                <option value="1.5">1.5x</option>
+              </select>
+            </div>
+            <div class="media-inline-control">
+              <label>Res</label>
+              <select id="previewResolution" onchange="onPreviewResolutionChange()" style="padding: 4px; font-size: 11px; width: 110px; background: transparent; border: 1px solid var(--border); border-radius: 4px;">
+               <option value="426x240">240p (426x240)</option>
+                <option value="640x360" selected>360p (640x360)</option>
+                <option value="854x480">480p (854x480)</option>
+                <option value="960x540">540p (960x540)</option>
+                <option value="1280x720">720p (1280x720)</option>
+                <option value="1920x1080">1080p (1920x1080)</option>
+                <option value="2560x1440">1440p (2560x1440)</option>
+              </select>
+            </div>
+            <div class="media-inline-control">
+              <label>Ptch <span id="pitchValue" style="font-size: 11px; color: var(--text-main)">1.00</span></label>
+              <input type="range" id="pitch" min="0.5" max="1.5" step="0.01" value="1" oninput="onPreviewTuneChanged()" style="width: 60px" />
+            </div>
+          </div>
+
+          <!-- Primary render actions: the three ways to produce a karaoke video -->
+          <div class="render-actions">
+            <button class="btn render-action-btn" onclick="startRender('preview')" title="Karaoke Video & Original Vocals (Sing Along With The Singer)">
+              <span class="render-action-title">Create Karaoke + Vocals</span>
+              <span class="render-action-sub">Original vocals</span>
+            </button>
+            <button class="btn render-action-btn" onclick="startRender('chorus')" title="Karaoke Video & Instrumental Audio + [ Custom Vocals (+Chorus)/ Chorus Added ]">
+              <span class="render-action-title">Create Karaoke + Chorus</span>
+              <span class="render-action-sub">Vocals on chorus only</span>
+            </button>
+            <button class="btn render-action-btn render-action-primary" onclick="startRender('final')" title="Standard Karaoke Video (Instrumental Audio Only - No Vocals)">
+              <span class="render-action-title">Create Std. Karaoke</span>
+              <span class="render-action-sub">Instrumental only</span>
+            </button>
+          </div>
+          <!-- CDG+MP3 karaoke disc export (zipped matched-name pair) -->
+          <div class="render-actions" style="margin-top: 6px;">
+            <button class="btn render-action-btn" onclick="startCdgExport('final')" title="Export a CDG+MP3 karaoke disc pair (zipped) using the instrumental audio">
+              <span class="render-action-title">Export CDG + MP3</span>
+              <span class="render-action-sub">Karaoke disc (.zip)</span>
+            </button>
+          </div>
+          <div id="actionStatus" style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center"></div>
+
+         <audio id="previewAudio" onloadedmetadata="onAudioLoaded()"></audio>
+        </div>
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: Media Vault -->
+      <div class="dock-panel" data-dock="vault">
+        <div class="card">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionLibraryBody', this)">
+            <span><span class="section-toggle-main">Media Vault</span></span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionLibraryBody" class="section-body">
+            <div class="pipeline-section" style="margin-top:0">
+              <label>Profile</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select id="profileSelect" style="flex:1;" onchange="onProfileSelectChange()" title="Only projects in this profile are shown"></select>
+                <button class="btn btn-small" title="Create a new profile" onclick="createProfilePrompt()">＋ New</button>
+                <button class="btn btn-small" title="Delete the selected profile (its projects move to Default)" onclick="deleteActiveProfile()">🗑</button>
+              </div>
+            </div>
+            <div class="pipeline-section" style="margin-top:12px">
+              <label>Local Upload</label>
+              <div style="display: flex; gap: 8px">
+                <input type="file" id="sourceUpload" accept=".mp3,.mp4,.wav,.m4a,.flac,.webm,video/*,audio/*" style="padding: 4px" />
+                <button class="btn" onclick="uploadSourceFile()">Push</button>
+              </div>
+              <label style="margin-top: 12px">Web Fetch</label>
+              <div style="display: flex; gap: 8px">
+                <input type="text" id="sourceUrl" placeholder="https://youtube.com/watch?v=..." />
+                <button class="btn" onclick="submitSourceUrl()">Pull</button>
+              </div>
+              <select id="downloadEngine" style="margin-top: 8px;">
+                <option value="ytdl">yt-dlp</option>
+                <option value="metube">MeTube</option>
+              </select>
+              <button class="btn btn-small btn-wide" onclick="autoTranscribe()" style="margin-top: 8px">Force Transcribe</button>
+            </div>
+            <div id="file-vault" style="overflow-y: auto; flex: 1; margin-top: 12px;">Scanning files...</div>
+            <button class="btn btn-small btn-wide" onclick="loadFileManifest()">Refresh Vault</button>
+          </div>
+        </div>
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+      <!-- DOCK: FX Customization -->
+      <div class="dock-panel" data-dock="fx" id="fxDockPanel" style="display:none">
+        <div class="card" id="fxPanelCard">
+          <button type="button" class="section-toggle" onclick="toggleSection('sectionFxPanelBody', this)">
+            <span>
+              <span class="section-toggle-main">⚙️ FX Customization</span>
+              <span class="section-toggle-sub" id="fxPanelSubtitle">Select an FX effect to customize options</span>
+            </span>
+            <span class="section-toggle-arrow">▾</span>
+          </button>
+          <div id="sectionFxPanelBody" class="section-body">
+            <!-- FX options will be dynamically populated here -->
+            <div id="fxPanelContent">
+              <div style="color: var(--text-muted); text-align: center; padding: 20px;">
+                No FX selected. Choose an effect from the FX dropdown to customize it.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dock-resizer" data-dir="e"></div>
+        <div class="dock-resizer" data-dir="s"></div>
+        <div class="dock-resizer" data-dir="se"></div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
